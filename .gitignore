@@ -1,0 +1,6 @@
+# System files
+desktop.ini
+.DS_Store
+
+# Archives
+*.zip
