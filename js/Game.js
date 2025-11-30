@@ -21,11 +21,13 @@ export class Game {
         this.guideParticles = null;
         this.navigation = null;
         this.uiManager = null;
+        this.guideBurstCooldown = 0;
         
         this.worldContainer = null;
         this.obstacles = [];
         this.flyingObjects = [];
         this.gates = [];
+        this.fadingGates = []; // Gates to be faded out
         this.tileGroup = null;
         this.tileSize = 0;
 
@@ -48,10 +50,11 @@ export class Game {
         this.uiManager = new UIManager(this);
 
         // Lighting
-        const ambientLight = new T.AmbientLight(0x606090, 0.4);
-        this.scene.add(ambientLight);
-        const directionalLight = new T.DirectionalLight(0xffffff, 0.3);
-        directionalLight.position.set(5, 10, 7.5);
+        const hemisphereLight = new T.HemisphereLight(0xE0BBE4, 0xCE9FCD, 0.96);
+        this.scene.add(hemisphereLight);
+        
+        const directionalLight = new T.DirectionalLight(0xFFCCA8, 0.72);
+        directionalLight.position.set(-100, 20, -100);
         this.scene.add(directionalLight);
 
         // World
@@ -82,13 +85,17 @@ export class Game {
         window.addEventListener('resize', () => this.onWindowResize());
     }
 
-    onGatePassed(gate) {
-        if (gate.userData.number === 1) {
-            const url = 'https://spinning-experiences-055746.framer.app/%EC%97%B0%EC%9D%B8';
-            this.uiManager.showGatePopup(url);
+        onGatePassed(gate) {
+            // Add gate to be faded out, but only if it's not already being processed
+            if (!this.fadingGates.includes(gate)) {
+                this.fadingGates.push(gate);
+            }
+            
+            if (gate.userData.number === 1) {
+                const url = 'https://spinning-experiences-055746.framer.app/%EC%97%B0%EC%9D%B8';
+                this.uiManager.showGatePopup(url);
+            }
         }
-    }
-
     pause() {
         this.isPaused = true;
         if (this.animationFrameId) {
@@ -206,17 +213,22 @@ export class Game {
         this.cameraController.update();
         
         const playerWorldPosition = new T.Vector3().copy(this.worldContainer.position).negate();
+        
+        // Update navigation and check for passed gates
         this.navigation.update(playerWorldPosition);
-        const currentTargetGate = this.navigation.getCurrentTarget();
+        const passedGate = this.navigation.getJustPassedGate();
+        if (passedGate) {
+            this.onGatePassed(passedGate);
+        }
 
-        // Update particle system
+        const currentTargetGate = this.navigation.getCurrentTarget();
+        
         if (currentTargetGate) {
-            const particleStartPos = this.player.model.position.clone().add(new T.Vector3(0, 1, 0));
-            // Use the gate's actual world position for the particle target, not the arrivalPoint
             const gateWorldPos = currentTargetGate.getWorldPosition(new T.Vector3());
+            const particleStartPos = this.player.model.position.clone().add(new T.Vector3(0, 2, 0));
             this.guideParticles.update(deltaTime, particleStartPos, gateWorldPos);
         } else {
-            this.guideParticles.update(deltaTime, this.player.model.position, null);
+            this.guideParticles.update(deltaTime, null, null);
         }
 
         this.updateInfiniteGround();
@@ -225,6 +237,47 @@ export class Game {
         this.stars.rotation.y += 0.00001;
         this.milkyWay.rotation.y += 0.00002;
 
+        this.updateFadingGates(deltaTime);
+
         this.renderer.render(this.scene, this.camera);
+    }
+
+    updateFadingGates(deltaTime) {
+        for (let i = this.fadingGates.length - 1; i >= 0; i--) {
+            const gate = this.fadingGates[i];
+
+            // On the first frame of fading, swap all materials for a single new one
+            if (!gate.userData.isFading) {
+                gate.userData.isFading = true;
+                
+                const fadingMaterial = new T.MeshStandardMaterial({
+                    transparent: true,
+                    opacity: 1.0,
+                    color: 0xaaaaaa // Default color
+                });
+                
+                // Attempt to grab a color from the original materials
+                const originalMaterial = gate.children[0]?.children[0]?.material;
+                if(originalMaterial && originalMaterial.color) {
+                    fadingMaterial.color.copy(originalMaterial.color);
+                }
+
+                gate.traverse(child => {
+                    if (child.isMesh) {
+                        child.material = fadingMaterial;
+                    }
+                });
+                gate.userData.fadingMaterial = fadingMaterial;
+            }
+
+            // Now, just update the one shared material's opacity
+            const fadingMaterial = gate.userData.fadingMaterial;
+            if (fadingMaterial && fadingMaterial.opacity > 0) {
+                fadingMaterial.opacity -= 0.5 * deltaTime;
+            } else if (fadingMaterial && fadingMaterial.opacity <= 0) {
+                gate.visible = false; // Hide the whole object
+                this.fadingGates.splice(i, 1);
+            }
+        }
     }
 }

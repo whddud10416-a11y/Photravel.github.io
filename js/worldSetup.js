@@ -21,10 +21,38 @@ export function createGround(container) {
     }
     groundGeometry.computeVertexNormals();
 
-    const groundMaterial = new T.MeshStandardMaterial({ 
-        map: sandTexture, 
-        side: T.DoubleSide,
-        color: 0x8A2BE2 // BlueViolet, a brighter and more dreamy purple
+    const groundVertexShader = `
+        varying vec3 vWorldPosition;
+        void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPosition.xyz;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `;
+
+    const groundFragmentShader = `
+        varying vec3 vWorldPosition;
+        uniform vec3 uCenterColor;
+        uniform vec3 uEdgeColor;
+        uniform float uGradientRadius;
+
+        void main() {
+            float dist = distance(vWorldPosition.xz, vec2(0.0));
+            float mixFactor = smoothstep(0.0, uGradientRadius, dist);
+            vec3 mixedColor = mix(uCenterColor, uEdgeColor, mixFactor);
+            gl_FragColor = vec4(mixedColor, 1.0);
+        }
+    `;
+
+    const groundMaterial = new T.ShaderMaterial({
+        uniforms: {
+            uCenterColor: { value: new T.Color('#CE9FCD') },
+            uEdgeColor: { value: new T.Color('#FFCCA8') },
+            uGradientRadius: { value: 600.0 }
+        },
+        vertexShader: groundVertexShader,
+        fragmentShader: groundFragmentShader,
+        side: T.DoubleSide
     });
 
     const tileGroup = new T.Group();
@@ -34,7 +62,6 @@ export function createGround(container) {
             const ground = new T.Mesh(groundGeometry, groundMaterial);
             ground.position.set(i * tileSize, 0, j * tileSize);
             ground.rotation.x = -Math.PI / 2;
-            ground.receiveShadow = true;
             tileGroup.add(ground);
         }
     }
@@ -54,9 +81,9 @@ export async function createRocks(container, occupiedPositions) {
     };
 
     const rockConfigs = {
-        big: { scale: 3.0, count: 308, minDistance: 12 },
-        middle: { scale: 1.5, count: 616, minDistance: 4 },
-        small: { scale: 1.5, count: 1232, minDistance: 1.5 },
+        big: { scale: 3.0, count: 115, minDistance: 12 },
+        middle: { scale: 1.5, count: 231, minDistance: 4 },
+        small: { scale: 1.5, count: 462, minDistance: 1.5 },
     };
 
     const loadPromises = Object.values(rockFileNames).flat().map(name => loader.loadAsync(`rocks/${name}`));
@@ -82,7 +109,7 @@ export async function createRocks(container, occupiedPositions) {
             let attempts = 0;
             while (!positionIsValid && attempts < 20) {
                 candidatePosition = new T.Vector3((Math.random() - 0.5) * placementArea * 2, 0.5, (Math.random() - 0.5) * placementArea * 2);
-                if (candidatePosition.length() < 20) { attempts++; continue; }
+                if (candidatePosition.length() < 5) { attempts++; continue; }
                 positionIsValid = true;
                 for (const pos of occupiedPositions) {
                     if (candidatePosition.distanceTo(pos) < config.minDistance) {
@@ -164,9 +191,9 @@ export async function createCacti(container, occupiedPositions) {
     };
 
     const cactusConfigs = {
-        small: { scale: 1.5, count: 672, minDistance: 4 },
-        medium: { scale: 2.5, count: 672, minDistance: 6 },
-        large: { scale: 4.0, count: 672, minDistance: 10 },
+        small: { scale: 1.5, count: 504, minDistance: 4 },
+        medium: { scale: 2.5, count: 504, minDistance: 6 },
+        large: { scale: 4.0, count: 504, minDistance: 10 },
     };
 
     const allCactusMeshes = {};
@@ -189,7 +216,7 @@ export async function createCacti(container, occupiedPositions) {
             let attempts = 0;
             while (!positionIsValid && attempts < 20) {
                  candidatePosition = new T.Vector3((Math.random() - 0.5) * placementArea * 2, 0.5, (Math.random() - 0.5) * placementArea * 2 );
-                if (candidatePosition.length() < 20) { attempts++; continue; }
+                if (candidatePosition.length() < 5) { attempts++; continue; }
                 positionIsValid = true;
                 for (const pos of occupiedPositions) {
                     if (candidatePosition.distanceTo(pos) < config.minDistance) {
@@ -260,19 +287,25 @@ function makeTextSprite(message, opts) {
 export async function createGates(container, occupiedPositions) {
     const loader = new GLTFLoader();
     const gates = [];
-    const gateConfig = { scale: 0.1, count: 85, minDistance: 150 };
+    const gateConfig = {
+        scale: 0.1,
+        count: 86, // 86 random + 1 fixed = 87 total
+        minDistFromPrev: 1200,
+        maxDistFromPrev: 1800,
+        minDistFromAny: 40, // Reduced to allow spawning near scenery
+    };
     const gltf = await loader.loadAsync('gate/gate.glb');
     const sourceGateModel = gltf.scene;
 
     let gateCounter = 1;
+    let lastGatePosition = new T.Vector3(0, 0.5, -50); // Start with the fixed gate's position
 
     // --- Create a fixed gate near spawn ---
-    const fixedGatePosition = new T.Vector3(0, 0, -50);
-    occupiedPositions.push(fixedGatePosition);
+    occupiedPositions.push(lastGatePosition.clone());
     const fixedGate = sourceGateModel.clone();
     const fixedBox = new T.Box3().setFromObject(fixedGate);
-    fixedGatePosition.y = -2 - (fixedBox.min.y * gateConfig.scale);
-    fixedGate.position.copy(fixedGatePosition);
+    fixedGate.position.copy(lastGatePosition);
+    fixedGate.position.y = -2 - (fixedBox.min.y * gateConfig.scale);
     fixedGate.scale.set(gateConfig.scale, gateConfig.scale, gateConfig.scale);
     
     fixedGate.userData.number = gateCounter;
@@ -281,37 +314,50 @@ export async function createGates(container, occupiedPositions) {
     fixedGate.add(label);
     gateCounter++;
     
-    container.add(fixedGate);
-    gates.push(fixedGate);
-
-    // Calculate and store the arrival point for the fixed gate
-    fixedGate.updateWorldMatrix(true, true);
-    const fixedGateBox = new T.Box3().setFromObject(fixedGate);
-    fixedGate.userData.arrivalPoint = fixedGateBox.getCenter(new T.Vector3());
+    // Create and store a ground-level trigger point for navigation
+    const triggerPoint = lastGatePosition.clone();
+    triggerPoint.y = 0;
+    fixedGate.userData.triggerPoint = triggerPoint;
     // ---
 
-    const placementArea = config.world.groundSize / 2 - 100;
-    for (let i = 0; i < gateConfig.count; i++) {
-        let positionIsValid = false;
-        let candidatePosition;
-        let attempts = 0;
-        while (!positionIsValid && attempts < 50) {
-            candidatePosition = new T.Vector3( (Math.random() - 0.5) * placementArea * 2, 0.5, (Math.random() - 0.5) * placementArea * 2 );
-            positionIsValid = true;
-            for (const pos of occupiedPositions) {
-                if (candidatePosition.distanceTo(pos) < gateConfig.minDistance) {
-                    positionIsValid = false;
-                    break;
+    container.add(fixedGate);
+    gates.push(fixedGate);
+    // ---
+
+            for (let i = 0; i < gateConfig.count; i++) {
+                let positionIsValid = false;
+                let candidatePosition;
+                let attempts = 0;
+                
+                while (!positionIsValid && attempts < 500) { // Increased attempts drastically
+                    // Generate a position relative to the last gate
+                    const randomAngle = Math.random() * Math.PI * 2;
+                    const randomRadius = T.MathUtils.randFloat(gateConfig.minDistFromPrev, gateConfig.maxDistFromPrev);
+                    
+                    candidatePosition = new T.Vector3(
+                        lastGatePosition.x + Math.cos(randomAngle) * randomRadius,
+                        0.5,
+                        lastGatePosition.z + Math.sin(randomAngle) * randomRadius
+                    );
+    
+                    // Check if it's too close to any other object
+                    positionIsValid = true;
+                    for (const pos of occupiedPositions) {
+                        if (candidatePosition.distanceTo(pos) < gateConfig.minDistFromAny) {
+                            positionIsValid = false;
+                            break;
+                        }
+                    }
+                    attempts++;
                 }
-            }
-            attempts++;
-        }
-        if (positionIsValid) {
-            occupiedPositions.push(candidatePosition);
+    
+                if (positionIsValid) {            occupiedPositions.push(candidatePosition.clone());
+            lastGatePosition = candidatePosition.clone(); // Update for the next iteration
+
             const gate = sourceGateModel.clone();
             const box = new T.Box3().setFromObject(gate);
-            candidatePosition.y = -2 - (box.min.y * gateConfig.scale);
             gate.position.copy(candidatePosition);
+            gate.position.y = -2 - (box.min.y * gateConfig.scale);
             gate.rotation.y = Math.random() * Math.PI * 2;
             gate.scale.set(gateConfig.scale, gateConfig.scale, gateConfig.scale);
             
@@ -321,13 +367,14 @@ export async function createGates(container, occupiedPositions) {
             gate.add(randomLabel);
             gateCounter++;
 
+            // Create and store a ground-level trigger point for navigation
+            const gateTriggerPoint = candidatePosition.clone();
+            gateTriggerPoint.y = 0;
+            gate.userData.triggerPoint = gateTriggerPoint;
+            // ---
+
             container.add(gate);
             gates.push(gate);
-
-            // Calculate and store the arrival point for the random gate
-            gate.updateWorldMatrix(true, true);
-            const gateBox = new T.Box3().setFromObject(gate);
-            gate.userData.arrivalPoint = gateBox.getCenter(new T.Vector3());
         }
     }
     return gates;
