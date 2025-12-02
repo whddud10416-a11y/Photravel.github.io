@@ -27,8 +27,8 @@ export function initScene() {
 
     // 하늘 그라데이션 설정
     const skyUniforms = {
-        topColor: { value: new THREE.Color(0xFFDAB9) }, // PeachPuff
-        bottomColor: { value: new THREE.Color(0xE0BBE4) } // Light Lavender/Pink
+        topColor: { value: new THREE.Color(0x000010) }, // Very dark blue
+        bottomColor: { value: new THREE.Color(0x191970) } // Midnight blue
     };
     const skyMaterial = new THREE.ShaderMaterial({
         uniforms: skyUniforms,
@@ -79,7 +79,7 @@ export function initScene() {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = false;
+    renderer.shadowMap.enabled = true;
     document.body.appendChild(renderer.domElement);
 
     return { scene, camera, renderer, sky, stars, milkyWay };

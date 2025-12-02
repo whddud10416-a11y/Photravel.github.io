@@ -79,7 +79,7 @@ export class Player {
         if (this.mixer) this.mixer.update(deltaTime);
 
         if (this.currentAction) {
-            const timeScale = speed / 10;
+            const timeScale = Math.abs(speed) / 10;
             this.currentAction.timeScale = timeScale;
         }
 
