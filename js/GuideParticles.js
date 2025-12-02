@@ -1,57 +1,63 @@
 import * as T from 'three';
+import { createNoise3D } from 'simplex-noise';
 
-const PARTICLE_COUNT = 25;      // How many particles are in the trail (reduced further)
-const TRAIL_LENGTH = 35;      // The visible length of the trail in world units
-const SWARM_RADIUS = 2.5;       // How much the particles spread out from the center line
-const PARTICLE_BASE_SIZE = 1.5;   // Base size of the particles (reduced by 50%)
-const FLOW_SPEED = 7.0;        // How fast the particles flow along the trail (reduced by 30%)
+const PARTICLE_COUNT = 50;
+const SWARM_RADIUS = 0.8; // Reduced range of wobbling
+const PARTICLE_BASE_SIZE = 3.5;
+const FLOW_SPEED = 7.5;
+const MAX_GUIDE_DISTANCE = 70.0;
+const NOISE_STRENGTH = 0.8; // Reduced strength of swirls
+const NOISE_TIME_SCALE = 0.2;
 
+// Implements a "Fixed Length Local Guide" with organic noise.
 export class GuideParticles {
     constructor(scene) {
         this.scene = scene;
+        this.noise3D = createNoise3D(Math.random);
         this.curve = null;
 
         const geometry = new T.BufferGeometry();
         const positions = new Float32Array(PARTICLE_COUNT * 3);
-        const alphas = new Float32Array(PARTICLE_COUNT);
-
-        const offsets = [];
+        const progresses = new Float32Array(PARTICLE_COUNT);
+        
+        this.particles = [];
         for (let i = 0; i < PARTICLE_COUNT; i++) {
+            this.particles.push({
+                progress: Math.random(), // Start at a random point in the stream
+            });
             positions[i * 3 + 1] = -10000;
-            offsets.push(
-                new T.Vector3(
-                    (Math.random() - 0.5) * SWARM_RADIUS,
-                    (Math.random() - 0.5) * SWARM_RADIUS,
-                    (Math.random() - 0.5) * SWARM_RADIUS
-                )
-            );
         }
-        this.particleOffsets = offsets;
-
+        
         geometry.setAttribute('position', new T.BufferAttribute(positions, 3));
-        geometry.setAttribute('alpha', new T.BufferAttribute(alphas, 1));
+        geometry.setAttribute('aProgress', new T.BufferAttribute(progresses, 1));
         
         const material = new T.ShaderMaterial({
-            uniforms: {
-                color: { value: new T.Color(0xadff2f) },
-            },
+            uniforms: { color: { value: new T.Color(0xadff2f) } },
             vertexShader: `
-                attribute float alpha;
-                varying float vAlpha;
+                attribute float aProgress;
+                varying float vProgress;
                 void main() {
-                    vAlpha = alpha;
+                    vProgress = aProgress;
                     vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
-                    gl_PointSize = ${PARTICLE_BASE_SIZE.toFixed(1)} * ( 300.0 / -mvPosition.z );
-                    gl_Position = projectionMatrix * mvPosition;
+                    
+                    // Size over Lifetime
+                    float size = ${PARTICLE_BASE_SIZE.toFixed(1)} * pow(1.0 - vProgress, 2.0);
+
+                    gl_PointSize = size * ( 300.0 / -mvPosition.z );
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
                 }
             `,
             fragmentShader: `
+                varying float vProgress;
                 uniform vec3 color;
-                varying float vAlpha;
                 void main() {
-                    if (distance(gl_PointCoord, vec2(0.5, 0.5)) > 0.5) discard;
+                    if (distance(gl_PointCoord, vec2(0.5, 0.5)) > 0.45) discard;
+                    
+                    // Opacity over Lifetime
+                    float alpha = pow(1.0 - vProgress, 3.0);
+
                     float glow = 1.0 - distance(gl_PointCoord, vec2(0.5, 0.5)) * 2.0;
-                    gl_FragColor = vec4( color, vAlpha * glow * 0.5 ); // Reduced brightness
+                    gl_FragColor = vec4( color, alpha * glow );
                 }
             `,
             blending: T.AdditiveBlending,
@@ -60,54 +66,56 @@ export class GuideParticles {
         });
 
         this.particleSystem = new T.Points(geometry, material);
-        this.particleSystem.visible = false;
         this.scene.add(this.particleSystem);
+        this.time = 0;
     }
     
-    update(deltaTime, playerPosition, targetPosition) {
-        if (!targetPosition) {
+    update(deltaTime, startPosition, targetPosition) {
+        if (!targetPosition || !startPosition) {
             this.particleSystem.visible = false;
             return;
         }
-
         this.particleSystem.visible = true;
+        this.time += deltaTime;
 
-        this.curve = new T.LineCurve3(playerPosition, targetPosition);
+        // 1. Create the fixed-length local path
+        const direction = new T.Vector3().subVectors(targetPosition, startPosition).normalize();
+        const endPoint = startPosition.clone().add(direction.multiplyScalar(MAX_GUIDE_DISTANCE));
+        this.curve = new T.LineCurve3(startPosition, endPoint);
 
         const positions = this.particleSystem.geometry.attributes.position.array;
-        const alphas = this.particleSystem.geometry.attributes.alpha.array;
-        const curveLength = this.curve.getLength();
-        const time = Date.now() / 1000;
+        const progresses = this.particleSystem.geometry.attributes.aProgress.array;
+        const normalizedFlowSpeed = FLOW_SPEED / MAX_GUIDE_DISTANCE;
 
-        for (let i = 0; i < PARTICLE_COUNT; i++) {
-            // Add a looping time offset to make the particles flow
-            const timeOffset = time * FLOW_SPEED;
+        for (let i = 0; i < this.particles.length; i++) {
+            const particle = this.particles[i];
+            particle.progress = (particle.progress + normalizedFlowSpeed * deltaTime) % 1.0;
 
-            // Calculate this particle's base distance along the trail
-            const baseDist = (i / (PARTICLE_COUNT - 1)) * TRAIL_LENGTH;
+            const currentPoint = this.curve.getPoint(particle.progress);
             
-            // Animate the distance and make it loop within the trail length
-            const animatedDist = (baseDist + timeOffset) % TRAIL_LENGTH;
+            // 2. Apply noise for organic movement
+            const noise = this.noise3D(
+                currentPoint.x * 0.1, 
+                currentPoint.y * 0.1, 
+                (this.time * NOISE_TIME_SCALE) + i * 0.01 // Use time scale
+            );
+            const noiseVec = new T.Vector3(
+                this.noise3D(currentPoint.x * 0.2 + (this.time * NOISE_TIME_SCALE), currentPoint.y * 0.2, i),
+                noise,
+                this.noise3D(currentPoint.z * 0.2, i, currentPoint.x * 0.2 + (this.time * NOISE_TIME_SCALE))
+            );
 
-            const progress = animatedDist / curveLength;
+            const finalPosition = currentPoint.add(noiseVec.multiplyScalar(SWARM_RADIUS * (1.0 - particle.progress)));
 
-            if (animatedDist > curveLength || progress >= 1) {
-                positions[i * 3 + 1] = -10000;
-                alphas[i] = 0;
-            } else {
-                // Alpha fades out based on distance along the fixed-length trail
-                alphas[i] = 1.0 - (animatedDist / TRAIL_LENGTH);
+            positions[i * 3] = finalPosition.x;
+            positions[i * 3 + 1] = finalPosition.y;
+            positions[i * 3 + 2] = finalPosition.z;
 
-                const basePosition = this.curve.getPoint(progress);
-                const finalPosition = basePosition.add(this.particleOffsets[i]);
-
-                positions[i * 3] = finalPosition.x;
-                positions[i * 3 + 1] = finalPosition.y;
-                positions[i * 3 + 2] = finalPosition.z;
-            }
+            // 3. Update progress for shader-based lifetime effects
+            progresses[i] = particle.progress;
         }
 
         this.particleSystem.geometry.attributes.position.needsUpdate = true;
-        this.particleSystem.geometry.attributes.alpha.needsUpdate = true;
+        this.particleSystem.geometry.attributes.aProgress.needsUpdate = true;
     }
 }

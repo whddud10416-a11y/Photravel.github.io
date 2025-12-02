@@ -4,6 +4,7 @@
     <title>Photravel</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" />
     <style>
         body {
             margin: 0;
@@ -11,6 +12,25 @@
             background-color: #000;
         }
         canvas { display: block; }
+        #gallery-button {
+            position: absolute;
+            top: 27px;
+            left: 51px;
+            font-family: 'Pretendard', sans-serif;
+            font-weight: 700; /* Bold */
+            font-size: 20px;
+            color: white;
+            text-decoration: none;
+            letter-spacing: 0.25em;
+            z-index: 10;
+            opacity: 0; /* Initially hidden */
+            filter: blur(10px); /* Initially blurred */
+            transition: opacity 1s ease, filter 1s ease; /* Transition for both */
+        }
+        #gallery-button.visible {
+            opacity: 1;
+            filter: blur(0px);
+        }
         #progress-container {
             position: absolute;
             top: 50%;
@@ -72,6 +92,7 @@
     </style>
 </head>
 <body>
+    <a id="gallery-button" href="#">Gallery</a>
     <div id="overlay-container">
         <button id="overlay-close-button">&times;</button>
         <iframe id="overlay-iframe" allowtransparency="true"></iframe>
@@ -86,7 +107,8 @@
             "imports": {
                 "three": "https://unpkg.com/three@0.163.0/build/three.module.js",
                 "three/addons/": "https://unpkg.com/three@0.163.0/examples/jsm/",
-                "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.min.js"
+                "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.min.js",
+                "simplex-noise": "https://cdn.jsdelivr.net/npm/simplex-noise@4.0.1/dist/esm/simplex-noise.js"
             }
         }
     </script>
