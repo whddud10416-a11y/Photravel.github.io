@@ -79,6 +79,7 @@ export function initScene() {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.shadowMap.enabled = false;
     document.body.appendChild(renderer.domElement);
 
