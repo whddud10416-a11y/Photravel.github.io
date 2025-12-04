@@ -303,8 +303,8 @@ export async function createGates(container, occupiedPositions) {
     const gateConfig = {
         scale: 0.1,
         count: 86, // 86 random + 1 fixed = 87 total
-        minDistFromPrev: 1200,
-        maxDistFromPrev: 1800,
+        minDistFromPrev: 700,
+        maxDistFromPrev: 1000,
         minDistFromAny: 40, // Reduced to allow spawning near scenery
     };
     const gltf = await loader.loadAsync('gate/gate.glb');
