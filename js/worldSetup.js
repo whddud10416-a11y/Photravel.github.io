@@ -122,7 +122,7 @@ export async function createRocks(container, occupiedPositions) {
             let attempts = 0;
             while (!positionIsValid && attempts < 20) {
                 candidatePosition = new T.Vector3((Math.random() - 0.5) * placementArea * 2, 0.5, (Math.random() - 0.5) * placementArea * 2);
-                if (candidatePosition.length() < 5) { attempts++; continue; }
+                if (candidatePosition.length() < 10) { attempts++; continue; }
                 positionIsValid = true;
                 for (const pos of occupiedPositions) {
                     if (candidatePosition.distanceTo(pos) < config.minDistance) {
@@ -229,7 +229,7 @@ export async function createCacti(container, occupiedPositions) {
             let attempts = 0;
             while (!positionIsValid && attempts < 20) {
                  candidatePosition = new T.Vector3((Math.random() - 0.5) * placementArea * 2, 0.5, (Math.random() - 0.5) * placementArea * 2 );
-                if (candidatePosition.length() < 5) { attempts++; continue; }
+                if (candidatePosition.length() < 10) { attempts++; continue; }
                 positionIsValid = true;
                 for (const pos of occupiedPositions) {
                     if (candidatePosition.distanceTo(pos) < config.minDistance) {
@@ -303,8 +303,8 @@ export async function createGates(container, occupiedPositions) {
     const gateConfig = {
         scale: 0.1,
         count: 86, // 86 random + 1 fixed = 87 total
-        minDistFromPrev: 700,
-        maxDistFromPrev: 1000,
+        minDistFromPrev: 900,
+        maxDistFromPrev: 1200,
         minDistFromAny: 40, // Reduced to allow spawning near scenery
     };
     const gltf = await loader.loadAsync('gate/gate.glb');

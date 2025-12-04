@@ -87,12 +87,18 @@
             color: black;
             border: none;
             border-radius: 50%;
-            width: 30px;
-            height: 30px;
+            width: 33px;
+            height: 33px;
             font-size: 20px;
             font-weight: bold;
             cursor: pointer;
             z-index: 101;
+            opacity: 1;
+            transition: opacity 0.3s ease-in-out;
+        }
+        #overlay-close-button.hidden {
+            opacity: 0;
+            pointer-events: none;
         }
     </style>
 </head>

@@ -38,6 +38,23 @@ export class Game {
     }
 
     async init() {
+        // 1. Initialize UI Manager first
+        this.uiManager = new UIManager(this);
+
+        // 2. Show intro popup as a loading screen (with close button hidden)
+        const homeUrl = 'https://spinning-experiences-055746.framer.app/';
+        this.uiManager.showIntroPopup(homeUrl);
+
+        // 3. Load all game assets in the background
+        await this._loadAssets();
+
+        // 4. After loading is complete, show the close button after a 5-second delay
+        setTimeout(() => {
+            this.uiManager.showCloseButton();
+        }, 5000);
+    }
+
+    async _loadAssets() {
         // Scene setup
         const sceneData = initScene();
         this.scene = sceneData.scene;
@@ -46,9 +63,6 @@ export class Game {
         this.sky = sceneData.sky;
         this.stars = sceneData.stars;
         this.milkyWay = sceneData.milkyWay;
-
-        // UI
-        this.uiManager = new UIManager(this);
 
         // Lighting
         const hemisphereLight = new T.HemisphereLight(0xE0BBE4, 0xCE9FCD, 0.96);
@@ -84,11 +98,6 @@ export class Game {
 
         // Event Listeners
         window.addEventListener('resize', () => this.onWindowResize());
-    }
-
-    showIntro() {
-        const homeUrl = 'https://spinning-experiences-055746.framer.app/';
-        this.uiManager.showIntroPopup(homeUrl);
     }
 
     onGatePassed(gate) {

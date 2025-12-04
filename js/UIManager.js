@@ -24,7 +24,12 @@ export class UIManager {
 
     showIntroPopup(url) {
         this.isIntro = true;
+        this.closeButton.classList.add('hidden'); // Hide close button initially
         this.showGatePopup(url);
+    }
+
+    showCloseButton() {
+        this.closeButton.classList.remove('hidden');
     }
 
     showGatePopup(url) {
@@ -68,6 +73,7 @@ export class UIManager {
 
         // Make iframe content transparent before the container fades out
         this.overlayIframe.classList.remove('loaded');
+        this.closeButton.classList.remove('hidden'); // Ensure button is visible next time
 
         this.overlayContainer.classList.remove('visible');
         this.isOverlayVisible = false;

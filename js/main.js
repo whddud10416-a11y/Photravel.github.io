@@ -2,11 +2,12 @@ import { Game } from './Game.js';
 
 async function main() {
     const game = new Game();
+    // init() now handles showing the intro, loading assets, and enabling the close button.
     await game.init();
 
     const galleryButton = document.getElementById('gallery-button');
     if (galleryButton) {
-        // Make the button appear after loading
+        // Make the button appear after loading is complete
         galleryButton.classList.remove('hidden'); // Ensure hidden class is removed if it was present
         galleryButton.classList.add('visible'); // Trigger the transition
         
@@ -16,10 +17,6 @@ async function main() {
             game.uiManager.showGatePopup(galleryUrl);
         });
     }
-
-    // Show the intro popup instead of starting the game directly
-    game.showIntro(); 
-    // game.start(); // Re-enabled for debugging mobile issue
 }
 
 try {
