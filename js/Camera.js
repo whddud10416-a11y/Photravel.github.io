@@ -53,6 +53,10 @@ export class CameraController {
         this.cameraOffset.normalize().multiplyScalar(this.desiredDistance);
     }
 
+    reset() {
+        this.isDragging = false;
+    }
+
     update() {
         if (!this.player.model) return;
         

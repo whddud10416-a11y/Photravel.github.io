@@ -23,24 +23,35 @@ export function createGround(container) {
 
     const groundVertexShader = `
         varying vec3 vWorldPosition;
+        varying vec2 vUv;
         void main() {
             vec4 worldPosition = modelMatrix * vec4(position, 1.0);
             vWorldPosition = worldPosition.xyz;
+            vUv = uv;
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         }
     `;
 
     const groundFragmentShader = `
         varying vec3 vWorldPosition;
+        varying vec2 vUv;
         uniform vec3 uCenterColor;
         uniform vec3 uEdgeColor;
         uniform float uGradientRadius;
+        uniform sampler2D uSandTexture;
+        uniform float uTextureAlpha;
 
         void main() {
             float dist = distance(vWorldPosition.xz, vec2(0.0));
             float mixFactor = smoothstep(0.0, uGradientRadius, dist);
-            vec3 mixedColor = mix(uCenterColor, uEdgeColor, mixFactor);
-            gl_FragColor = vec4(mixedColor, 1.0);
+            vec3 gradientColor = mix(uCenterColor, uEdgeColor, mixFactor);
+            
+            vec4 texColor = texture2D(uSandTexture, vUv);
+            float luminance = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
+            
+            vec3 finalColor = gradientColor * (1.0 + (luminance - 0.5) * uTextureAlpha);
+
+            gl_FragColor = vec4(finalColor, 1.0);
         }
     `;
 
@@ -48,7 +59,9 @@ export function createGround(container) {
         uniforms: {
             uCenterColor: { value: new T.Color('#CE9FCD') },
             uEdgeColor: { value: new T.Color('#FFCCA8') },
-            uGradientRadius: { value: 600.0 }
+            uGradientRadius: { value: 600.0 },
+            uSandTexture: { value: sandTexture },
+            uTextureAlpha: { value: 0.8 }
         },
         vertexShader: groundVertexShader,
         fragmentShader: groundFragmentShader,
@@ -81,9 +94,9 @@ export async function createRocks(container, occupiedPositions) {
     };
 
     const rockConfigs = {
-        big: { scale: 3.0, count: 115, minDistance: 12 },
-        middle: { scale: 1.5, count: 231, minDistance: 4 },
-        small: { scale: 1.5, count: 462, minDistance: 1.5 },
+        big: { scale: 3.0, count: 173, minDistance: 12 },
+        middle: { scale: 1.5, count: 347, minDistance: 4 },
+        small: { scale: 1.5, count: 693, minDistance: 1.5 },
     };
 
     const loadPromises = Object.values(rockFileNames).flat().map(name => loader.loadAsync(`rocks/${name}`));
@@ -191,9 +204,9 @@ export async function createCacti(container, occupiedPositions) {
     };
 
     const cactusConfigs = {
-        small: { scale: 1.5, count: 504, minDistance: 4 },
-        medium: { scale: 2.5, count: 504, minDistance: 6 },
-        large: { scale: 4.0, count: 504, minDistance: 10 },
+        small: { scale: 1.5, count: 756, minDistance: 4 },
+        medium: { scale: 2.5, count: 756, minDistance: 6 },
+        large: { scale: 4.0, count: 756, minDistance: 10 },
     };
 
     const allCactusMeshes = {};
@@ -297,10 +310,10 @@ export async function createGates(container, occupiedPositions) {
     const gltf = await loader.loadAsync('gate/gate.glb');
     const sourceGateModel = gltf.scene;
 
-    let gateCounter = 1;
-    let lastGatePosition = new T.Vector3(0, 0.5, -50); // Start with the fixed gate's position
+    // --- Create all gates first without numbering ---
 
-    // --- Create a fixed gate near spawn ---
+    // 1. Create the "fixed" gate near spawn
+    let lastGatePosition = new T.Vector3(0, 0.5, -50);
     occupiedPositions.push(lastGatePosition.clone());
     const fixedGate = sourceGateModel.clone();
     const fixedBox = new T.Box3().setFromObject(fixedGate);
@@ -308,51 +321,42 @@ export async function createGates(container, occupiedPositions) {
     fixedGate.position.y = -2 - (fixedBox.min.y * gateConfig.scale);
     fixedGate.scale.set(gateConfig.scale, gateConfig.scale, gateConfig.scale);
     
-    fixedGate.userData.number = gateCounter;
-    const label = makeTextSprite(` ${gateCounter} `, { fontsize: 32 });
-    label.position.set(0, 15, 0);
-    fixedGate.add(label);
-    gateCounter++;
-    
-    // Create and store a ground-level trigger point for navigation
     const triggerPoint = lastGatePosition.clone();
     triggerPoint.y = 0;
     fixedGate.userData.triggerPoint = triggerPoint;
-    // ---
-
+    
     container.add(fixedGate);
     gates.push(fixedGate);
-    // ---
 
-            for (let i = 0; i < gateConfig.count; i++) {
-                let positionIsValid = false;
-                let candidatePosition;
-                let attempts = 0;
-                
-                while (!positionIsValid && attempts < 500) { // Increased attempts drastically
-                    // Generate a position relative to the last gate
-                    const randomAngle = Math.random() * Math.PI * 2;
-                    const randomRadius = T.MathUtils.randFloat(gateConfig.minDistFromPrev, gateConfig.maxDistFromPrev);
-                    
-                    candidatePosition = new T.Vector3(
-                        lastGatePosition.x + Math.cos(randomAngle) * randomRadius,
-                        0.5,
-                        lastGatePosition.z + Math.sin(randomAngle) * randomRadius
-                    );
-    
-                    // Check if it's too close to any other object
-                    positionIsValid = true;
-                    for (const pos of occupiedPositions) {
-                        if (candidatePosition.distanceTo(pos) < gateConfig.minDistFromAny) {
-                            positionIsValid = false;
-                            break;
-                        }
-                    }
-                    attempts++;
+    // 2. Create all the random gates
+    for (let i = 0; i < gateConfig.count; i++) {
+        let positionIsValid = false;
+        let candidatePosition;
+        let attempts = 0;
+        
+        while (!positionIsValid && attempts < 500) {
+            const randomAngle = Math.random() * Math.PI * 2;
+            const randomRadius = T.MathUtils.randFloat(gateConfig.minDistFromPrev, gateConfig.maxDistFromPrev);
+            
+            candidatePosition = new T.Vector3(
+                lastGatePosition.x + Math.cos(randomAngle) * randomRadius,
+                0.5,
+                lastGatePosition.z + Math.sin(randomAngle) * randomRadius
+            );
+
+            positionIsValid = true;
+            for (const pos of occupiedPositions) {
+                if (candidatePosition.distanceTo(pos) < gateConfig.minDistFromAny) {
+                    positionIsValid = false;
+                    break;
                 }
-    
-                if (positionIsValid) {            occupiedPositions.push(candidatePosition.clone());
-            lastGatePosition = candidatePosition.clone(); // Update for the next iteration
+            }
+            attempts++;
+        }
+
+        if (positionIsValid) {
+            occupiedPositions.push(candidatePosition.clone());
+            lastGatePosition = candidatePosition.clone(); 
 
             const gate = sourceGateModel.clone();
             const box = new T.Box3().setFromObject(gate);
@@ -361,21 +365,31 @@ export async function createGates(container, occupiedPositions) {
             gate.rotation.y = Math.random() * Math.PI * 2;
             gate.scale.set(gateConfig.scale, gateConfig.scale, gateConfig.scale);
             
-            gate.userData.number = gateCounter;
-            const randomLabel = makeTextSprite(` ${gateCounter} `, { fontsize: 32 });
-            randomLabel.position.set(0, 15, 0);
-            gate.add(randomLabel);
-            gateCounter++;
-
-            // Create and store a ground-level trigger point for navigation
             const gateTriggerPoint = candidatePosition.clone();
             gateTriggerPoint.y = 0;
             gate.userData.triggerPoint = gateTriggerPoint;
-            // ---
-
+            
             container.add(gate);
             gates.push(gate);
         }
     }
+
+    // --- Sort gates by distance from spawn (0,0,0) ---
+    const spawnPoint = new T.Vector3(0, 0, 0);
+    gates.sort((a, b) => {
+        const distA = a.position.distanceTo(spawnPoint);
+        const distB = b.position.distanceTo(spawnPoint);
+        return distA - distB;
+    });
+
+    // --- Assign numbers and labels to the sorted gates ---
+    gates.forEach((gate, index) => {
+        const gateNumber = index + 1;
+        gate.userData.number = gateNumber;
+        const label = makeTextSprite(` ${gateNumber} `, { fontsize: 32 });
+        label.position.set(0, 15, 0);
+        gate.add(label);
+    });
+    
     return gates;
 }

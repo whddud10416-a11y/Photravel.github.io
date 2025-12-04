@@ -12,12 +12,13 @@ async function main() {
         
         galleryButton.addEventListener('click', (event) => {
             event.preventDefault(); // Prevent default link navigation
-            const galleryUrl = 'https://spinning-experiences-055746.framer.app/';
+            const galleryUrl = 'https://spinning-experiences-055746.framer.app/gallery';
             game.uiManager.showGatePopup(galleryUrl);
         });
     }
 
-    game.start();
+    // Show the intro popup instead of starting the game directly
+    game.showIntro();
 }
 
 try {

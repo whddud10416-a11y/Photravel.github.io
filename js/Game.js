@@ -33,6 +33,7 @@ export class Game {
 
         this.clock = new T.Clock();
         this.isPaused = false;
+        this.isGameStarted = false; // Flag to track if the game has started
         this.animationFrameId = null;
     }
 
@@ -66,11 +67,11 @@ export class Game {
         this.tileSize = groundData.tileSize;
         
         const allObjectPositions = [];
+        this.gates = await createGates(this.worldContainer, allObjectPositions);
+        
         const rockObstacles = await createRocks(this.worldContainer, allObjectPositions);
         const cactusObstacles = await createCacti(this.worldContainer, allObjectPositions);
         this.obstacles = [...rockObstacles, ...cactusObstacles];
-        
-        this.gates = await createGates(this.worldContainer, allObjectPositions);
 
         // Player
         this.player = new Player(this.scene);
@@ -85,27 +86,41 @@ export class Game {
         window.addEventListener('resize', () => this.onWindowResize());
     }
 
-        onGatePassed(gate) {
-            // Add gate to be faded out, but only if it's not already being processed
-            if (!this.fadingGates.includes(gate)) {
-                this.fadingGates.push(gate);
-            }
-            
-            if (gate.userData.number === 1) {
-                const url = 'https://spinning-experiences-055746.framer.app/%EC%97%B0%EC%9D%B8';
-                this.uiManager.showGatePopup(url);
-            }
+    showIntro() {
+        const homeUrl = 'https://spinning-experiences-055746.framer.app/';
+        this.uiManager.showIntroPopup(homeUrl);
+    }
+
+    onGatePassed(gate) {
+        // Add gate to be faded out, but only if it's not already being processed
+        if (!this.fadingGates.includes(gate)) {
+            this.fadingGates.push(gate);
         }
+        
+        const gateNumber = gate.userData.number;
+        if (gateNumber) {
+            const baseUrl = 'https://spinning-experiences-055746.framer.app/popup/';
+            const url = `${baseUrl}${gateNumber}`;
+            this.uiManager.showGatePopup(url);
+        }
+    }
     pause() {
         this.isPaused = true;
         if (this.animationFrameId) {
             cancelAnimationFrame(this.animationFrameId);
             this.animationFrameId = null;
         }
+        if (this.player && this.player.input) {
+            this.player.input.reset();
+        }
+        if (this.cameraController) {
+            this.cameraController.reset();
+        }
         console.log("Game paused");
     }
 
     resume() {
+        if (!this.isGameStarted) return; // Do not resume if game hasn't started
         this.isPaused = false;
         this.clock.getDelta(); // Reset clock delta
         this.animate();
@@ -113,7 +128,10 @@ export class Game {
     }
 
     start() {
+        if (this.isGameStarted) return; // Prevent multiple starts
+        this.isGameStarted = true;
         this.animate();
+        console.log("Game started");
     }
 
     onWindowResize() {
@@ -140,44 +158,73 @@ export class Game {
 
     handleCollisions(displacement) {
         const worldDisplacement = displacement.clone().negate();
+        const playerWorldPosition = new T.Vector3().copy(this.worldContainer.position).negate();
+        const nextPlayerPosition = playerWorldPosition.clone().add(worldDisplacement);
+        
+        const playerBox = this.player.boundingBox.clone().translate(nextPlayerPosition);
 
-        const checkCollision = (disp) => {
-            const playerWorldPosition = new T.Vector3().copy(this.worldContainer.position).negate();
-            const nextPlayerBox = this.player.boundingBox.clone().translate(playerWorldPosition).translate(disp);
-            for (const obstacle of this.obstacles) {
-                const checkBoxes = obstacle.boxes || [obstacle.box];
-                for (const box of checkBoxes) {
-                    if (nextPlayerBox.intersectsBox(box)) return obstacle;
+        let collidedObstacle = null;
+        let collidedBox = null; // The specific sub-box that was hit
+
+        for (const obstacle of this.obstacles) {
+            const checkBoxes = obstacle.boxes || [obstacle.box];
+            for (const box of checkBoxes) {
+                if (playerBox.intersectsBox(box)) {
+                    collidedObstacle = obstacle;
+                    collidedBox = box;
+                    break;
                 }
             }
-            return null;
-        };
+            if (collidedObstacle) break;
+        }
 
-        const collidedObject = checkCollision(worldDisplacement);
 
-        if (!collidedObject) {
+        if (!collidedObstacle) {
             this.worldContainer.position.add(displacement);
-        } else if (collidedObject.type === 'cactus') {
+        } else if (collidedObstacle.type === 'cactus') {
             this.worldContainer.position.add(displacement);
-            const index = this.obstacles.indexOf(collidedObject);
+            const index = this.obstacles.indexOf(collidedObstacle);
             if (index > -1) this.obstacles.splice(index, 1);
             
-            // Apply a fixed-speed impulse instead of using player velocity
             const launchDirection = displacement.clone().normalize();
-            collidedObject.flyVelocity = launchDirection.multiplyScalar(-120); // Fly backward with a fixed speed of 120
-            collidedObject.flyVelocity.y += 5 + Math.random() * 5; // Add upward force
+            collidedObstacle.flyVelocity = launchDirection.multiplyScalar(-120);
+            collidedObstacle.flyVelocity.y += 5 + Math.random() * 5;
 
-            collidedObject.rotationSpeed = { x: (Math.random() - 0.5) * 10, y: (Math.random() - 0.5) * 10, z: (Math.random() - 0.5) * 10 };
-            this.flyingObjects.push(collidedObject);
-        } else { // Rocks
-            const xOnlyDisplacement = new T.Vector3(displacement.x, 0, 0);
-            if (!checkCollision(xOnlyDisplacement.clone().negate())) {
-                this.worldContainer.position.add(xOnlyDisplacement);
+            collidedObstacle.rotationSpeed = { x: (Math.random() - 0.5) * 10, y: (Math.random() - 0.5) * 10, z: (Math.random() - 0.5) * 10 };
+            this.flyingObjects.push(collidedObstacle);
+        } else { // It's a rock, so we slide
+            const mtv = new T.Vector3(); // Minimum Translation Vector
+            
+            const overlapX1 = playerBox.max.x - collidedBox.min.x;
+            const overlapX2 = collidedBox.max.x - playerBox.min.x;
+            const overlapZ1 = playerBox.max.z - collidedBox.min.z;
+            const overlapZ2 = collidedBox.max.z - playerBox.min.z;
+
+            let minOverlap = Infinity;
+            
+            if (overlapX1 > 0 && overlapX1 < minOverlap) {
+                minOverlap = overlapX1;
+                mtv.set(-overlapX1, 0, 0);
             }
-            const zOnlyDisplacement = new T.Vector3(0, 0, displacement.z);
-            if (!checkCollision(zOnlyDisplacement.clone().negate())) {
-                this.worldContainer.position.add(zOnlyDisplacement);
+            if (overlapX2 > 0 && overlapX2 < minOverlap) {
+                minOverlap = overlapX2;
+                mtv.set(overlapX2, 0, 0);
             }
+            if (overlapZ1 > 0 && overlapZ1 < minOverlap) {
+                minOverlap = overlapZ1;
+                mtv.set(0, 0, -overlapZ1);
+            }
+            if (overlapZ2 > 0 && overlapZ2 < minOverlap) {
+                minOverlap = overlapZ2;
+                mtv.set(0, 0, overlapZ2);
+            }
+            
+            const correctedPlayerPosition = nextPlayerPosition.clone().add(mtv);
+
+            // The player's position in the world is the negative of the world container's position.
+            // So, we set the world container's position to the negative of the player's corrected final position.
+            const newWorldContainerPosition = correctedPlayerPosition.clone().negate();
+            this.worldContainer.position.copy(newWorldContainerPosition);
         }
     }
 

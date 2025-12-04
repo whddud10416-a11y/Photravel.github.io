@@ -12,4 +12,8 @@ export class InputController {
             this.keysPressed[event.key.toLowerCase()] = false;
         });
     }
+
+    reset() {
+        this.keysPressed = {};
+    }
 }
