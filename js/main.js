@@ -18,8 +18,8 @@ async function main() {
     }
 
     // Show the intro popup instead of starting the game directly
-    // game.showIntro(); 
-    game.start(); // Re-enabled for debugging mobile issue
+    game.showIntro(); 
+    // game.start(); // Re-enabled for debugging mobile issue
 }
 
 try {

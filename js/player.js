@@ -2,7 +2,6 @@ import * as T from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputController } from './InputController.js';
 import { PlayerController } from './PlayerController.js';
-import { JoystickController } from './JoystickController.js';
 
 // Reverted to non-physics 'moving world' version.
 export class Player {
@@ -14,12 +13,6 @@ export class Player {
         this.mixer = null;
         this.animations = new Map();
         this.currentAction = null;
-        this.joystick = null;
-
-        // Conditionally create JoystickController for touch devices
-        if ('ontouchstart' in window) {
-            this.joystick = new JoystickController(this.input);
-        }
 
         this.boundingBox = new T.Box3();
     }
