@@ -34,9 +34,13 @@ const cactusFileNames = {
 };
 
 const cactusConfigs = {
-    large:  { scale: 4.0, count: 6, selfDistance: 200 },
-    medium: { scale: 2.5, count: 9, selfDistance: 100 },
-    small:  { scale: 1.5, count: 9, selfDistance: 50 },
+    // verticalAdjust determined empirically from logs.
+    // All cactus models showed a Calculated Vertical Offset of ~0.00,
+    // indicating their origin is at their base. Thus, the new logic uses the calculated offset directly.
+    // Small positive adjustments are added to medium/small to prevent arms from sinking into the ground.
+    large:  { scale: 4.0, count: 7, selfDistance: 160, verticalAdjust: 0 },
+    medium: { scale: 2.5, count: 10, selfDistance: 80, verticalAdjust: 0.3 },
+    small:  { scale: 1.5, count: 10, selfDistance: 40,  verticalAdjust: 0.5 },
 };
 
 const DISTANCE_MAP = {
@@ -47,6 +51,12 @@ const DISTANCE_MAP = {
     }
 };
 
+const sizeToRadius = {
+    'rock-big': 100, 'rock-middle': 50, 'rock-small': 25,
+    'cactus-large': 80, 'cactus-medium': 40, 'cactus-small': 20,
+    'gate': 150,
+};
+
 /**
  * Generates cactus data for a specific chunk, checking against existing and neighbor positions.
  * @param {number} chunkX - The x-coordinate of the chunk.
@@ -55,7 +65,7 @@ const DISTANCE_MAP = {
  * @param {object[]} allOccupiedPositions - An array of objects with {position, type, size} to check against.
  * @returns {Promise<object[]>} A promise that resolves to the array of generated cactus data for the chunk.
  */
-export async function generateCactiDataForChunk(chunkX, chunkZ, chunkSize, allOccupiedPositions) {
+export async function generateCactiDataForChunk(chunkX, chunkZ, chunkSize) {
     const finalObjectData = [];
     const seed = (chunkX * 19 + chunkZ * 47) * 23;
     const seededRandom = createSeededRandom(seed);
@@ -68,70 +78,23 @@ export async function generateCactiDataForChunk(chunkX, chunkZ, chunkSize, allOc
         const files = cactusFileNames[category];
         
         for (let k = 0; k < config.count; k++) {
-            let positionIsValid = false;
-            let candidatePosition;
-            let attempts = 0;
+            const posX = (chunkX + seededRandom() - 0.5) * chunkSize;
+            const posZ = (chunkZ + seededRandom() - 0.5) * chunkSize;
+            const candidatePosition = new T.Vector3(posX, 0, posZ);
 
-            while (!positionIsValid && attempts < 50) {
-                const posX = (chunkX + seededRandom() - 0.5) * chunkSize;
-                const posZ = (chunkZ + seededRandom() - 0.5) * chunkSize;
-                const groundY = getGroundHeight(posX, posZ);
-                candidatePosition = new T.Vector3(posX, groundY, posZ);
-                
-                positionIsValid = true;
+            const modelFile = `cactus/${files[Math.floor(seededRandom() * files.length)]}`;
+            const model = await getModel(modelFile);
 
-                for (const occupied of allOccupiedPositions) {
-                    const dist = candidatePosition.distanceTo(occupied.position);
-                    let minAllowedDist = 0;
-
-                    if (occupied.type === 'cactus') {
-                        if (occupied.size === category) {
-                            minAllowedDist = config.selfDistance;
-                        } else {
-                            minAllowedDist = DISTANCE_MAP.cactus.differentSize;
-                        }
-                    } else if (occupied.type === 'rock') {
-                        minAllowedDist = DISTANCE_MAP.cactus.rock;
-                    } else if (occupied.type === 'gate') {
-                        minAllowedDist = DISTANCE_MAP.cactus.gate;
-                    }
-
-                    if (dist < minAllowedDist) {
-                        positionIsValid = false;
-                        break;
-                    }
-                }
-                attempts++;
-            }
-
-            if (positionIsValid) {
-                const newCactusInfo = {
-                    position: candidatePosition.clone(),
+            if (model) {
+                finalObjectData.push({
                     type: 'cactus',
-                    size: category
-                };
-                allOccupiedPositions.push(newCactusInfo);
-
-                const modelFile = `cactus/${files[Math.floor(seededRandom() * files.length)]}`;
-                const model = await getModel(modelFile);
-
-                if (model) {
-                     // Calculate bounding box to find the exact vertical offset needed for this specific model
-                    const box = new T.Box3().setFromObject(model);
-                    const verticalOffset = -box.min.y; // Distance from model's origin to its bottom
-
-                    // Apply ground height plus the SCALED vertical offset
-                    candidatePosition.y += (verticalOffset * config.scale);
-
-                    finalObjectData.push({
-                        type: 'cactus',
-                        size: category,
-                        model: model,
-                        position: candidatePosition.clone(),
-                        rotation: new T.Euler(-Math.PI / 2, 0, seededRandom() * Math.PI * 2),
-                        scale: new T.Vector3(config.scale, config.scale, config.scale)
-                    });
-                }
+                    size: category,
+                    model: model,
+                    position: candidatePosition.clone(),
+                    rotation: new T.Euler(-Math.PI / 2, 0, seededRandom() * Math.PI * 2),
+                    scale: new T.Vector3(config.scale, config.scale, config.scale),
+                    config: config, // Pass config for later use
+                });
             }
         }
     }
