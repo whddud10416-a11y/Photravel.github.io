@@ -1,11 +1,13 @@
 import * as T from 'three';
 import { initScene } from './scene.js';
-import { createGround, createRocks, createCacti, createGates } from './worldSetup.js';
+import { createGround, createRocks, createCacti, createGates } from './world/index.js';
 import { Player } from './player.js';
 import { CameraController } from './Camera.js';
 import { GuideParticles } from './GuideParticles.js';
 import { Navigation } from './Navigation.js';
 import { UIManager } from './UIManager.js';
+import { SpatialGrid } from './managers/SpatialGrid.js';
+import { AtmosphericParticles } from './AtmosphericParticles.js';
 
 export class Game {
     constructor() {
@@ -21,6 +23,8 @@ export class Game {
         this.guideParticles = null;
         this.navigation = null;
         this.uiManager = null;
+        this.spatialGrid = null;
+        this.atmosphericParticles = null;
         this.guideBurstCooldown = 0;
         
         this.worldContainer = null;
@@ -63,7 +67,7 @@ export class Game {
         this.sky = sceneData.sky;
         this.stars = sceneData.stars;
         this.milkyWay = sceneData.milkyWay;
-
+        
         // Lighting
         const hemisphereLight = new T.HemisphereLight(0xE0BBE4, 0xCE9FCD, 0.96);
         this.scene.add(hemisphereLight);
@@ -81,15 +85,25 @@ export class Game {
         this.tileSize = groundData.tileSize;
         
         const allObjectPositions = [];
-        this.gates = await createGates(this.worldContainer, allObjectPositions);
         
         const rockObstacles = await createRocks(this.worldContainer, allObjectPositions);
         const cactusObstacles = await createCacti(this.worldContainer, allObjectPositions);
         this.obstacles = [...rockObstacles, ...cactusObstacles];
 
+        this.gates = await createGates(this.worldContainer, allObjectPositions);
+
+        // Initialize and populate the spatial grid for collision detection
+        this.spatialGrid = new SpatialGrid(5000, 5000, 100);
+        this.obstacles.forEach(obstacle => {
+            if (obstacle.box || obstacle.boxes) {
+                this.spatialGrid.add(obstacle);
+            }
+        });
+
         // Player
         this.player = new Player(this.scene);
         await this.player.loadModels();
+        this.atmosphericParticles = new AtmosphericParticles(this.worldContainer);
 
         // Controllers
         this.cameraController = new CameraController(this.camera, this.player);
@@ -175,7 +189,10 @@ export class Game {
         let collidedObstacle = null;
         let collidedBox = null; // The specific sub-box that was hit
 
-        for (const obstacle of this.obstacles) {
+        // Get only nearby obstacles from the spatial grid to check against
+        const nearbyObstacles = this.spatialGrid.getNearby(playerWorldPosition, 50);
+
+        for (const obstacle of nearbyObstacles) {
             const checkBoxes = obstacle.boxes || [obstacle.box];
             for (const box of checkBoxes) {
                 if (playerBox.intersectsBox(box)) {
@@ -193,10 +210,17 @@ export class Game {
         } else if (collidedObstacle.type === 'cactus') {
             this.worldContainer.position.add(displacement);
             const index = this.obstacles.indexOf(collidedObstacle);
-            if (index > -1) this.obstacles.splice(index, 1);
+            if (index > -1) {
+                this.obstacles.splice(index, 1);
+                this.spatialGrid.remove(collidedObstacle); // Also remove from the grid
+            }
             
+            // Determine launch speed based on player speed
+            const isSprinting = this.player.controller.currentSpeed > this.player.controller.maxSpeed;
+            const launchMagnitude = isSprinting ? -120 : -60; // Half speed if not sprinting
+
             const launchDirection = displacement.clone().normalize();
-            collidedObstacle.flyVelocity = launchDirection.multiplyScalar(-120);
+            collidedObstacle.flyVelocity = launchDirection.multiplyScalar(launchMagnitude);
             collidedObstacle.flyVelocity.y += 5 + Math.random() * 5;
 
             collidedObstacle.rotationSpeed = { x: (Math.random() - 0.5) * 10, y: (Math.random() - 0.5) * 10, z: (Math.random() - 0.5) * 10 };
@@ -270,6 +294,9 @@ export class Game {
         
         const playerWorldPosition = new T.Vector3().copy(this.worldContainer.position).negate();
         
+        // Update atmospheric particles
+        this.atmosphericParticles.update(deltaTime, playerWorldPosition);
+
         // Update navigation and check for passed gates
         this.navigation.update(playerWorldPosition);
         const passedGate = this.navigation.getJustPassedGate();
@@ -290,6 +317,9 @@ export class Game {
         this.updateInfiniteGround();
 
         this.sky.position.copy(this.camera.position);
+        this.stars.position.copy(this.camera.position);
+        this.milkyWay.position.copy(this.camera.position);
+
         this.stars.rotation.y += 0.00001;
         this.milkyWay.rotation.y += 0.00002;
 

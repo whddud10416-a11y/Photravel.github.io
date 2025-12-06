@@ -1,0 +1,83 @@
+import * as T from 'three';
+import { config } from '../config.js';
+
+export function createGround(container) {
+    const tileSize = config.world.groundSize;
+    const segments = 100;
+    const textureLoader = new T.TextureLoader();
+    const sandTexture = textureLoader.load('color.webp');
+    sandTexture.wrapS = T.RepeatWrapping;
+    sandTexture.wrapT = T.RepeatWrapping;
+    sandTexture.repeat.set(config.world.textureRepeat, config.world.textureRepeat);
+
+    const groundGeometry = new T.PlaneGeometry(tileSize, tileSize, segments, segments);
+    const positions = groundGeometry.attributes.position;
+    for (let i = 0; i < positions.count; i++) {
+        const x = positions.getX(i);
+        const y = positions.getY(i);
+        const z = (Math.sin(x / config.world.duneFrequency) * config.world.duneHeight) + (Math.sin(y / 20) * config.world.duneHeight);
+        positions.setZ(i, z);
+    }
+    groundGeometry.computeVertexNormals();
+
+    const groundVertexShader = `
+        varying vec3 vWorldPosition;
+        varying vec2 vUv;
+        void main() {
+            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+            vWorldPosition = worldPosition.xyz;
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `;
+
+    const groundFragmentShader = `
+        varying vec3 vWorldPosition;
+        varying vec2 vUv;
+        uniform vec3 uCenterColor;
+        uniform vec3 uEdgeColor;
+        uniform float uGradientRadius;
+        uniform sampler2D uSandTexture;
+        uniform float uTextureAlpha;
+
+        void main() {
+            float dist = distance(vWorldPosition.xz, vec2(0.0));
+            float mixFactor = smoothstep(0.0, uGradientRadius, dist);
+            vec3 gradientColor = mix(uCenterColor, uEdgeColor, mixFactor);
+            
+            vec4 texColor = texture2D(uSandTexture, vUv);
+            float luminance = dot(texColor.rgb, vec3(0.299, 0.587, 0.114));
+            
+            vec3 finalColor = gradientColor * (1.0 + (luminance - 0.5) * uTextureAlpha);
+
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
+    `;
+
+    const groundMaterial = new T.ShaderMaterial({
+        uniforms: {
+            uCenterColor: { value: new T.Color('#CE9FCD') },
+            uEdgeColor: { value: new T.Color('#FFCCA8') },
+            uGradientRadius: { value: 600.0 },
+            uSandTexture: { value: sandTexture },
+            uTextureAlpha: { value: 0.8 }
+        },
+        vertexShader: groundVertexShader,
+        fragmentShader: groundFragmentShader,
+        side: T.DoubleSide
+    });
+
+    const tileGroup = new T.Group();
+    tileGroup.position.y = 0; 
+    for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+            const ground = new T.Mesh(groundGeometry, groundMaterial);
+            ground.position.set(i * tileSize, 0, j * tileSize);
+            ground.rotation.x = -Math.PI / 2;
+            tileGroup.add(ground);
+        }
+    }
+    container.add(tileGroup);
+
+    return { tileGroup, tileSize };
+}

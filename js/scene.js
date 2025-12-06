@@ -68,6 +68,8 @@ export function initScene() {
     milkyWay.rotation.y = Math.PI / 2;
     scene.add(milkyWay);
 
+    // Add fog to the scene
+    scene.fog = new THREE.Fog(0xD0AECF, 100, 500);
 
     const camera = new THREE.PerspectiveCamera(
         config.camera.fov,

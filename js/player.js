@@ -19,17 +19,19 @@ export class Player {
 
     async loadModels() {
         const loader = new GLTFLoader();
-        const chassisGltf = await loader.loadAsync('lp_car/fw.gltf');
-        this.model = chassisGltf.scene;
+        
+        // Load the GLTF file once
+        const gltf = await loader.loadAsync('lp_car/fw.gltf');
+
+        // Set the model from the loaded scene
+        this.model = gltf.scene;
         this.model.scale.set(3.0, 3.0, 3.0);
         this.model.position.y = 0.5;
         this.scene.add(this.model);
 
+        // Set up the animation mixer using the loaded animations
         this.mixer = new T.AnimationMixer(this.model);
-        const animationGltf = await loader.loadAsync('lp_car/fw.gltf'); 
-        // This assumes animations are in fw.gltf. A more robust solution
-        // would be to load all gltfs as done in a previous version.
-        animationGltf.animations.forEach(clip => {
+        gltf.animations.forEach(clip => {
             const action = this.mixer.clipAction(clip);
             const name = clip.name.toLowerCase() || 'idle';
             this.animations.set(name, action);
