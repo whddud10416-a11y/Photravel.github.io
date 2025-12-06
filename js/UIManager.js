@@ -24,7 +24,7 @@ export class UIManager {
 
     showIntroPopup(url) {
         this.isIntro = true;
-        this.closeButton.classList.add('hidden'); // Hide close button initially
+        // The button is now hidden by default in the HTML, so this line is not needed.
         this.showGatePopup(url);
     }
 

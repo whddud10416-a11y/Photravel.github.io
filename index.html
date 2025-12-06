@@ -81,7 +81,7 @@
         }
         #overlay-close-button {
             position: absolute;
-            top: 20px;
+            top: 28px;
             right: 20px;
             background: white;
             color: black;
@@ -94,7 +94,7 @@
             cursor: pointer;
             z-index: 101;
             opacity: 1;
-            transition: opacity 0.3s ease-in-out;
+            transition: opacity 1s ease-in-out;
         }
         #overlay-close-button.hidden {
             opacity: 0;
@@ -105,8 +105,8 @@
 <body>
     <a id="gallery-button" href="#">Gallery</a>
     <div id="overlay-container">
-        <button id="overlay-close-button">&times;</button>
         <iframe id="overlay-iframe" allowtransparency="true"></iframe>
+        <button id="overlay-close-button" class="hidden">&times;</button>
     </div>
 
     <div id="error-container" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: red; background-color: black; padding: 20px; border: 1px solid red; display: none;">

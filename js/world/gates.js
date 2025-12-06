@@ -39,13 +39,42 @@ export async function createGates(container, occupiedPositions) {
     const gltf = await loader.loadAsync('gate/gate.glb');
     const sourceGateModel = gltf.scene;
 
+    // Brighten the gate material by 10%
+    sourceGateModel.traverse(child => {
+        if (child.isMesh && child.material && child.material.color) {
+            child.material.color.multiplyScalar(1.05);
+        }
+    });
+
     // --- Create all gates first without numbering ---
+    
+    // 1. Create a special gate near the origin first.
+    const firstGateAngle = Math.random() * Math.PI * 2;
+    const firstGateRadius = T.MathUtils.randFloat(50, 100);
+    const firstGatePosition = new T.Vector3(
+        Math.cos(firstGateAngle) * firstGateRadius,
+        0.5,
+        Math.sin(firstGateAngle) * firstGateRadius
+    );
+    
+    occupiedPositions.push(firstGatePosition.clone());
 
-    // The generation chain will start from the world origin.
-    let lastGatePosition = new T.Vector3(0, 0, 0);
+    const firstGate = sourceGateModel.clone();
+    const firstGateBox = new T.Box3().setFromObject(firstGate);
+    firstGate.position.copy(firstGatePosition);
+    firstGate.position.y = -2 - (firstGateBox.min.y * gateConfig.scale);
+    firstGate.rotation.y = Math.random() * Math.PI * 2;
+    firstGate.scale.set(gateConfig.scale, gateConfig.scale, gateConfig.scale);
+    firstGate.userData.triggerPoint = firstGatePosition.clone();
+    container.add(firstGate);
+    gates.push(firstGate);
 
-    // 2. Create all the random gates
-    for (let i = 0; i < gateConfig.count; i++) {
+
+    // The generation chain will now start from this first gate.
+    let lastGatePosition = firstGatePosition.clone();
+
+    // 2. Create all the remaining random gates
+    for (let i = 0; i < gateConfig.count - 1; i++) { // N-1 gates
         let positionIsValid = false;
         let candidatePosition;
         let attempts = 0;

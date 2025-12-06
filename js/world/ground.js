@@ -12,10 +12,19 @@ export function createGround(container) {
 
     const groundGeometry = new T.PlaneGeometry(tileSize, tileSize, segments, segments);
     const positions = groundGeometry.attributes.position;
+
+    // Calculate new frequencies to ensure seamless tiling
+    const periodFactorX = Math.ceil(tileSize / (config.world.duneFrequency * 2 * Math.PI));
+    const seamlessDuneFrequencyX = tileSize / (periodFactorX * 2 * Math.PI);
+
+    const periodFactorY = Math.ceil(tileSize / (20 * 2 * Math.PI)); // Original hardcoded 20
+    const seamlessDuneFrequencyY = tileSize / (periodFactorY * 2 * Math.PI);
+
     for (let i = 0; i < positions.count; i++) {
         const x = positions.getX(i);
         const y = positions.getY(i);
-        const z = (Math.sin(x / config.world.duneFrequency) * config.world.duneHeight) + (Math.sin(y / 20) * config.world.duneHeight);
+        // Use the new seamless frequencies
+        const z = (Math.sin(x / seamlessDuneFrequencyX) * config.world.duneHeight) + (Math.sin(y / seamlessDuneFrequencyY) * config.world.duneHeight);
         positions.setZ(i, z);
     }
     groundGeometry.computeVertexNormals();

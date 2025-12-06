@@ -1,11 +1,31 @@
 import * as T from 'three';
-import { config } from '../config.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { createSeededRandom } from '../utils/SeededRandom.js';
 
-export async function createRocks(container, occupiedPositions) {
-    const loader = new GLTFLoader();
-    const obstacles = [];
+// Using a simple cache for loaded models to avoid re-loading the same GLB file.
+const loader = new GLTFLoader();
+const modelCache = new Map();
 
+async function getModel(path) {
+    if (modelCache.has(path)) {
+        return modelCache.get(path).clone();
+    }
+    const gltf = await loader.loadAsync(path);
+    modelCache.set(path, gltf.scene);
+    return gltf.scene.clone();
+}
+
+
+/**
+ * Generates the data for all rock instances for a specific chunk.
+ * @param {number} chunkX - The x-coordinate of the chunk.
+ * @param {number} chunkZ - The z-coordinate of the chunk.
+ * @param {number} chunkSize - The size of the chunk.
+ * @param {object[]} globalOccupiedPositions - Positions of objects (like gates) to avoid.
+ * @returns {Promise<object[]>} A promise that resolves to an array of raw object data for the chunk.
+ */
+export async function generateChunkRocks(chunkX, chunkZ, chunkSize, globalOccupiedPositions) {
+    
     const rockFileNames = {
         big: ['big_rock_1.glb', 'big_rock_2.glb', 'big_rock_3.glb'],
         middle: ['middle_rock_1.glb', 'middle_rock_2.glb', 'middle_rock_3.glb', 'middle_rock_4.glb', 'middle_rock_5.glb'],
@@ -13,101 +33,81 @@ export async function createRocks(container, occupiedPositions) {
     };
 
     const rockConfigs = {
-        big: { scale: 3.0, count: 173, minDistance: 12 },
-        middle: { scale: 1.5, count: 694, minDistance: 4 },
-        small: { scale: 1.5, count: 1386, minDistance: 1.5 },
+        big: { scale: 3.0, count: 1, chance: 0.585, minDistance: 12, multipart: true },
+        middle: { scale: 1.5, count: 3, chance: 1.0, minDistance: 4, multipart: false },
+        small: { scale: 1.5, count: 5, chance: 1.0, minDistance: 1.5, multipart: false },
     };
 
-    const loadPromises = Object.values(rockFileNames).flat().map(name => loader.loadAsync(`rocks/${name}`));
-    const loadedGltfs = await Promise.all(loadPromises);
-    const allModels = loadedGltfs.map(gltf => gltf.scene);
+    const finalObjectData = [];
+    const localOccupiedPositions = [];
 
-    let modelIndex = 0;
-    const rockModels = {
-        big: allModels.slice(modelIndex, modelIndex += rockFileNames.big.length),
-        middle: allModels.slice(modelIndex, modelIndex += rockFileNames.middle.length),
-        small: allModels.slice(modelIndex, modelIndex += rockFileNames.small.length),
-    };
+    // --- To solve border collisions, we generate positions for a 3x3 grid of chunks ---
+    // --- but only keep the ones for the central chunk (0,0) ---
+    const neighborOccupiedPositions = [...globalOccupiedPositions];
 
-    const placementArea = config.world.groundSize / 2 - 100;
+    for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+            const currentChunkX = chunkX + i;
+            const currentChunkZ = chunkZ + j;
+            
+            // Create a deterministic seed from the chunk coordinates
+            const seed = (currentChunkX * 31 + currentChunkZ * 17) * 13;
+            const seededRandom = createSeededRandom(seed);
 
-    const placeRockCategory = (category) => {
-        const models = rockModels[category];
-        const config = rockConfigs[category];
-
-        for (let i = 0; i < config.count; i++) {
-            let positionIsValid = false;
-            let candidatePosition;
-            let attempts = 0;
-            while (!positionIsValid && attempts < 20) {
-                candidatePosition = new T.Vector3((Math.random() - 0.5) * placementArea * 2, 0.5, (Math.random() - 0.5) * placementArea * 2);
-                if (candidatePosition.length() < 10) { attempts++; continue; }
-                positionIsValid = true;
-                for (const pos of occupiedPositions) {
-                    if (candidatePosition.distanceTo(pos) < config.minDistance) {
-                        positionIsValid = false;
-                        break;
+            for (const category in rockConfigs) {
+                const config = rockConfigs[category];
+                const files = rockFileNames[category];
+                
+                // Determine how many to place based on count and chance
+                let numToPlace = 0;
+                for(let n = 0; n < config.count; n++) {
+                    if (seededRandom() < config.chance) {
+                        numToPlace++;
                     }
                 }
-                attempts++;
-            }
 
-            if (positionIsValid) {
-                occupiedPositions.push(candidatePosition);
-                const sourceModel = models[Math.floor(Math.random() * models.length)];
-                const rock = sourceModel.clone();
-                rock.position.copy(candidatePosition);
-                rock.rotation.y = Math.random() * Math.PI * 2;
-                rock.scale.set(config.scale, config.scale, config.scale);
-                container.add(rock);
+                for (let k = 0; k < numToPlace; k++) {
+                    let positionIsValid = false;
+                    let candidatePosition;
+                    let attempts = 0;
 
-                if (category === 'big') {
-                    const aabb = new T.Box3().setFromObject(rock);
-                    const size = new T.Vector3();
-                    aabb.getSize(size);
-                    const center = new T.Vector3();
-                    aabb.getCenter(center);
-                    const numBoxes = 3;
-                    const subBoxes = [];
-                    if (size.x > size.z) {
-                        const boxWidth = size.x / numBoxes;
-                        for (let j = 0; j < numBoxes; j++) {
-                            const boxCenter = new T.Vector3(center.x - size.x / 2 + boxWidth * (j + 0.5), center.y, center.z);
-                            const newSize = new T.Vector3(boxWidth, size.y, size.z * 0.8);
-                            const subBox = new T.Box3();
-                            subBox.setFromCenterAndSize(boxCenter, newSize);
-                            subBox.min.y += size.y * 0.15;
-                            subBoxes.push(subBox);
+                    while (!positionIsValid && attempts < 20) {
+                        const posX = (currentChunkX + seededRandom()) * chunkSize;
+                        const posZ = (currentChunkZ + seededRandom()) * chunkSize;
+                        candidatePosition = new T.Vector3(posX, 0, posZ);
+                        
+                        positionIsValid = true;
+                        for (const pos of neighborOccupiedPositions) {
+                            if (candidatePosition.distanceTo(pos) < config.minDistance) {
+                                positionIsValid = false;
+                                break;
+                            }
                         }
-                    } else {
-                        const boxDepth = size.z / numBoxes;
-                        for (let j = 0; j < numBoxes; j++) {
-                            const boxCenter = new T.Vector3(center.x, center.y, center.z - size.z / 2 + boxDepth * (j + 0.5));
-                            const newSize = new T.Vector3(size.x * 0.8, size.y, boxDepth);
-                            const subBox = new T.Box3();
-                            subBox.setFromCenterAndSize(boxCenter, newSize);
-                            subBox.min.y += size.y * 0.15;
-                            subBoxes.push(subBox);
+                        attempts++;
+                    }
+
+                    if (positionIsValid) {
+                        neighborOccupiedPositions.push(candidatePosition.clone());
+
+                        // --- Only add the object if it's in the *central* chunk we're generating for ---
+                        if (i === 0 && j === 0) {
+                             const modelFile = `rocks/${files[Math.floor(seededRandom() * files.length)]}`;
+                             const model = await getModel(modelFile);
+
+                            finalObjectData.push({
+                                type: 'rock',
+                                model: model,
+                                position: candidatePosition,
+                                rotation: new T.Euler(0, seededRandom() * Math.PI * 2, 0),
+                                scale: new T.Vector3(config.scale, config.scale, config.scale),
+                                multipart: config.multipart
+                            });
                         }
                     }
-                    obstacles.push({ type: 'rock', mesh: rock, boxes: subBoxes });
-                } else {
-                    const tempBox = new T.Box3().setFromObject(rock);
-                    const size = new T.Vector3();
-                    tempBox.getSize(size);
-                    const center = new T.Vector3();
-                    tempBox.getCenter(center);
-                    const newSize = new T.Vector3(size.x * 0.7, size.y, size.z * 0.7);
-                    const scaledBox = new T.Box3();
-                    scaledBox.setFromCenterAndSize(center, newSize);
-                    scaledBox.min.y += size.y * 0.15;
-                    obstacles.push({ type: 'rock', mesh: rock, box: scaledBox });
                 }
             }
         }
-    };
-    placeRockCategory('big');
-    placeRockCategory('middle');
-    placeRockCategory('small');
-    return obstacles;
+    }
+    
+    return finalObjectData;
 }

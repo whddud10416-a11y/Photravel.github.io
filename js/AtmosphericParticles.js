@@ -57,7 +57,7 @@ export class AtmosphericParticles {
             alphas[i] = Math.random(); // Start with random alpha
             
             randoms[i3 + 0] = (Math.random() - 0.5) * 0.5;
-            randoms[i3 + 1] = 0.5 + Math.random() * 2.5;
+            randoms[i3 + 1] = 0.6 + Math.random() * 3.0;
             randoms[i3 + 2] = (Math.random() - 0.5) * 0.5;
         }
 

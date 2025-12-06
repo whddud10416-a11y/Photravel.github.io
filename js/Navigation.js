@@ -6,7 +6,6 @@ export class Navigation {
         this.onGatePassedCallback = onGatePassedCallback;
         this.currentTargetGate = null;
         this.visitedGates = new Set();
-        this.justPassedGate = null; // To handle passing event outside the loop
         this.ARRIVAL_DISTANCE = 39.0;
         
         this.lastTargetNumber = -1; // For debugging
@@ -15,15 +14,16 @@ export class Navigation {
     }
 
     update(playerWorldPosition) {
-        // 1. Check for arrival at ANY gate to mark it as visited
+        // 1. Check for arrival at ANY unvisited gate
         this.gates.forEach(gate => {
             if (!this.visitedGates.has(gate.uuid) && gate.userData.triggerPoint) {
-                // Use the ground-level trigger point for distance check
                 const distance = playerWorldPosition.distanceTo(gate.userData.triggerPoint);
 
                 if (distance < this.ARRIVAL_DISTANCE) {
                     this.visitedGates.add(gate.uuid);
-                    this.justPassedGate = gate; // Store the gate to be processed externally
+                    if (this.onGatePassedCallback) {
+                        this.onGatePassedCallback(gate); // Directly call the callback
+                    }
                 }
             }
         });
@@ -33,7 +33,6 @@ export class Navigation {
         let minDistance = Infinity;
         this.gates.forEach(gate => {
             if (!this.visitedGates.has(gate.uuid) && gate.userData.triggerPoint) {
-                // Use the ground-level trigger point for distance check
                 const distance = playerWorldPosition.distanceTo(gate.userData.triggerPoint);
                 if (distance < minDistance) {
                     minDistance = distance;
@@ -53,12 +52,6 @@ export class Navigation {
                 this.lastTargetNumber = null;
             }
         }
-    }
-
-    getJustPassedGate() {
-        const gate = this.justPassedGate;
-        this.justPassedGate = null; // Reset after getting it
-        return gate;
     }
 
     getCurrentTarget() {

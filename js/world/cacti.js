@@ -1,11 +1,40 @@
 import * as T from 'three';
-import { config } from '../config.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { createSeededRandom } from '../utils/SeededRandom.js';
 
-export async function createCacti(container, occupiedPositions) {
-    const loader = new GLTFLoader();
-    const obstacles = [];
+const loader = new GLTFLoader();
+const modelCache = new Map();
 
+async function getModel(path) {
+    if (modelCache.has(path)) {
+        return modelCache.get(path).clone();
+    }
+    const gltf = await loader.loadAsync(path);
+    let mesh = null;
+    gltf.scene.traverse(node => {
+        if (node.isMesh) {
+            mesh = node;
+        }
+    });
+
+    if (mesh) {
+        modelCache.set(path, mesh);
+        return mesh.clone();
+    }
+    console.error(`No mesh found in ${path}`);
+    return null;
+}
+
+/**
+ * Generates the data for all cactus instances for a specific chunk.
+ * @param {number} chunkX - The x-coordinate of the chunk.
+ * @param {number} chunkZ - The z-coordinate of the chunk.
+ * @param {number} chunkSize - The size of the chunk.
+ * @param {object[]} globalOccupiedPositions - Positions of objects (like gates) to avoid.
+ * @returns {Promise<object[]>} A promise that resolves to an array of raw object data for the chunk.
+ */
+export async function generateChunkCacti(chunkX, chunkZ, chunkSize, globalOccupiedPositions) {
+    
     const cactusFileNames = {
         small: ['cactus_1.glb', 'cactus_2.glb', 'cactus_3.glb'],
         medium: ['cactus_4.glb', 'cactus_5.glb', 'cactus_6.glb'],
@@ -13,70 +42,68 @@ export async function createCacti(container, occupiedPositions) {
     };
 
     const cactusConfigs = {
-        small: { scale: 1.5, count: 1512, minDistance: 4 },
-        medium: { scale: 2.5, count: 1512, minDistance: 6 },
-        large: { scale: 4.0, count: 1512, minDistance: 10 },
+        small: { scale: 1.5, count: 5, minDistance: 4 },
+        medium: { scale: 2.5, count: 5, minDistance: 6 },
+        large: { scale: 4.0, count: 5, minDistance: 10 },
     };
 
-    const allCactusMeshes = {};
-    for (const category in cactusFileNames) {
-        const loadPromises = cactusFileNames[category].map(name => loader.loadAsync(`cactus/${name}`));
-        const loadedGltfs = await Promise.all(loadPromises);
-        const meshes = [];
-        loadedGltfs.forEach(gltf => { gltf.scene.traverse(node => { if (node.isMesh) meshes.push(node.clone()); }); });
-        allCactusMeshes[category] = meshes;
-    }
+    const finalObjectData = [];
 
-    const placementArea = config.world.groundSize / 2 - 100;
+    // To solve border collisions, generate for a 3x3 grid and keep the center
+    const neighborOccupiedPositions = [...globalOccupiedPositions];
 
-    const placeCactusCategory = (category) => {
-        const models = allCactusMeshes[category];
-        const config = cactusConfigs[category];
-        for (let i = 0; i < config.count; i++) {
-            let positionIsValid = false;
-            let candidatePosition;
-            let attempts = 0;
-            while (!positionIsValid && attempts < 20) {
-                 candidatePosition = new T.Vector3((Math.random() - 0.5) * placementArea * 2, 0.5, (Math.random() - 0.5) * placementArea * 2 );
-                if (candidatePosition.length() < 10) { attempts++; continue; }
-                positionIsValid = true;
-                for (const pos of occupiedPositions) {
-                    if (candidatePosition.distanceTo(pos) < config.minDistance) {
-                        positionIsValid = false;
-                        break;
+    for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+            const currentChunkX = chunkX + i;
+            const currentChunkZ = chunkZ + j;
+            
+            const seed = (currentChunkX * 19 + currentChunkZ * 47) * 23; // Different primes from rocks
+            const seededRandom = createSeededRandom(seed);
+
+            for (const category in cactusConfigs) {
+                const config = cactusConfigs[category];
+                const files = cactusFileNames[category];
+                
+                for (let k = 0; k < config.count; k++) {
+                    let positionIsValid = false;
+                    let candidatePosition;
+                    let attempts = 0;
+
+                    while (!positionIsValid && attempts < 20) {
+                        const posX = (currentChunkX + seededRandom()) * chunkSize;
+                        const posZ = (currentChunkZ + seededRandom()) * chunkSize;
+                        candidatePosition = new T.Vector3(posX, 0, posZ);
+                        
+                        positionIsValid = true;
+                        for (const pos of neighborOccupiedPositions) {
+                            if (candidatePosition.distanceTo(pos) < config.minDistance) {
+                                positionIsValid = false;
+                                break;
+                            }
+                        }
+                        attempts++;
+                    }
+
+                    if (positionIsValid) {
+                        neighborOccupiedPositions.push(candidatePosition.clone());
+
+                        if (i === 0 && j === 0) {
+                            const modelFile = `cactus/${files[Math.floor(seededRandom() * files.length)]}`;
+                            const model = await getModel(modelFile);
+
+                            finalObjectData.push({
+                                type: 'cactus',
+                                model: model,
+                                position: candidatePosition,
+                                rotation: new T.Euler(-Math.PI / 2, 0, seededRandom() * Math.PI * 2),
+                                scale: new T.Vector3(config.scale, config.scale, config.scale)
+                            });
+                        }
                     }
                 }
-                attempts++;
-            }
-
-            if (positionIsValid) {
-                occupiedPositions.push(candidatePosition);
-                const sourceMesh = models[Math.floor(Math.random() * models.length)];
-                const mesh = sourceMesh.clone();
-                mesh.rotation.x = -Math.PI / 2;
-                const cactus = new T.Group();
-                cactus.add(mesh);
-                cactus.position.copy(candidatePosition);
-                cactus.rotation.y = Math.random() * Math.PI * 2;
-                cactus.scale.set(config.scale, config.scale, config.scale);
-                container.add(cactus);
-                
-                const tempBox = new T.Box3().setFromObject(cactus);
-                const size = new T.Vector3();
-                tempBox.getSize(size);
-                const center = new T.Vector3();
-                tempBox.getCenter(center);
-                
-                const newSize = new T.Vector3(size.x * 0.5, size.y, size.z * 0.5);
-                const scaledBox = new T.Box3();
-                scaledBox.setFromCenterAndSize(center, newSize);
-                scaledBox.min.y += size.y * 0.15;
-                obstacles.push({ type: 'cactus', mesh: cactus, box: scaledBox });
             }
         }
-    };
-    placeCactusCategory('small');
-    placeCactusCategory('medium');
-    placeCactusCategory('large');
-    return obstacles;
+    }
+    
+    return finalObjectData;
 }
