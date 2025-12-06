@@ -1,8 +1,8 @@
 import * as T from 'three';
 import { initScene } from './scene.js';
 import { createGround } from './world/ground.js';
-import { generateChunkRocks } from './world/rocks.js';
-import { generateChunkCacti } from './world/cacti.js';
+import { getOrGenerateRockDataForChunk } from './world/rocks.js';
+import { getOrGenerateCactiDataForChunk } from './world/cacti.js';
 import { createGates } from './world/gates.js';
 import { Player } from './player.js';
 import { CameraController } from './Camera.js';
@@ -73,19 +73,51 @@ export class Game {
             }
         };
 
-        // Start listening for the interaction immediately.
+        const overlayContainer = document.getElementById('overlay-container');
+        
+        let blurHandler;
+        let pointerDownHandler;
+
         const onFirstInteraction = () => {
-            console.log("First interaction (window blur) detected.");
+            if (firstInteractionOccurred) return; // Should not be necessary, but good for safety
+            console.log("First interaction detected.");
             firstInteractionOccurred = true;
-            tryShowButton(); // Check if we can show the button now.
+            tryShowButton();
+
+            // Clean up both listeners immediately
+            window.removeEventListener('blur', blurHandler);
+            overlayContainer.removeEventListener('pointerdown', pointerDownHandler);
         };
-        window.addEventListener('blur', onFirstInteraction, { once: true });
+
+        blurHandler = () => {
+            // Use a timeout because document.activeElement might not be updated immediately
+            setTimeout(() => {
+                if (document.activeElement === document.getElementById('overlay-iframe')) {
+                    onFirstInteraction();
+                }
+            }, 0);
+        };
+
+        pointerDownHandler = () => {
+            onFirstInteraction();
+        };
+
+        window.addEventListener('blur', blurHandler);
+        overlayContainer.addEventListener('pointerdown', pointerDownHandler);
 
         // Start loading assets and update the flag when done.
         this._loadAssets().then(() => {
             console.log("Background asset loading complete.");
             loadingComplete = true;
             tryShowButton(); // Check if we can show the button now.
+        }).catch(error => {
+            console.error("Fatal error during asset loading:", error);
+            const errorContainer = document.getElementById('error-container');
+            const errorMessage = document.getElementById('error-message');
+            if (errorContainer && errorMessage) {
+                errorMessage.textContent = error.stack || error;
+                errorContainer.style.display = 'block';
+            }
         });
     }
 
@@ -147,9 +179,9 @@ export class Game {
 
         const [chunkX, chunkZ] = chunkId.split('_').map(Number);
         
-        // Generate object data on the fly
-        const rockData = await generateChunkRocks(chunkX, chunkZ, CHUNK_SIZE, this.gateOccupiedPositions);
-        const cactusData = await generateChunkCacti(chunkX, chunkZ, CHUNK_SIZE, this.gateOccupiedPositions);
+        // Generate object data on the fly using the new recursive functions
+        const rockData = await getOrGenerateRockDataForChunk(chunkX, chunkZ, CHUNK_SIZE, this.gateOccupiedPositions);
+        const cactusData = await getOrGenerateCactiDataForChunk(chunkX, chunkZ, CHUNK_SIZE, this.gateOccupiedPositions);
         const chunkData = [...rockData, ...cactusData];
 
         if (chunkData.length === 0) {
