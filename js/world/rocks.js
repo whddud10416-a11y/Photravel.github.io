@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createSeededRandom } from '../utils/SeededRandom.js';
+import { getGroundHeight } from './ground.js';
 
 // Module-level cache for models, but not for chunk data.
 const loader = new GLTFLoader();
@@ -64,7 +65,8 @@ export async function generateRockDataForChunk(chunkX, chunkZ, chunkSize, allOcc
             while (!positionIsValid && attempts < 50) {
                 const posX = (chunkX + seededRandom() - 0.5) * chunkSize;
                 const posZ = (chunkZ + seededRandom() - 0.5) * chunkSize;
-                candidatePosition = new T.Vector3(posX, 0, posZ);
+                const groundY = getGroundHeight(posX, posZ);
+                candidatePosition = new T.Vector3(posX, groundY, posZ);
                 
                 positionIsValid = true;
                 
@@ -103,6 +105,13 @@ export async function generateRockDataForChunk(chunkX, chunkZ, chunkSize, allOcc
                 const modelFile = `rocks/${files[Math.floor(seededRandom() * files.length)]}`;
                 const model = await getModel(modelFile);
 
+                // Calculate bounding box to find the exact vertical offset needed for this specific model
+                const box = new T.Box3().setFromObject(model);
+                const verticalOffset = -box.min.y; // Distance from model's origin to its bottom
+
+                // Apply ground height plus the SCALED vertical offset
+                candidatePosition.y += (verticalOffset * config.scale);
+                
                 finalObjectData.push({
                     type: 'rock',
                     size: category,
