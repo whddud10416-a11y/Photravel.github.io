@@ -1,8 +1,8 @@
 import * as T from 'three';
 import { initScene } from './scene.js';
 import { createGround } from './world/ground.js';
-import { getOrGenerateRockDataForChunk } from './world/rocks.js';
-import { getOrGenerateCactiDataForChunk } from './world/cacti.js';
+import { generateRockDataForChunk } from './world/rocks.js';
+import { generateCactiDataForChunk } from './world/cacti.js';
 import { createGates } from './world/gates.js';
 import { Player } from './player.js';
 import { CameraController } from './Camera.js';
@@ -39,11 +39,13 @@ export class Game {
         
         // World and object management
         this.chunkManager = new ChunkManager(CHUNK_SIZE);
+        this.rockDataCache = new Map();
+        this.cactiDataCache = new Map();
         this.spatialGrid = new SpatialGrid(50000, 50000, 100);
         this.activeObstacles = new Map(); // Map from mesh.uuid to obstacle data
         this.flyingObjects = [];
         this.gates = [];
-        this.gateOccupiedPositions = []; // Store gate positions to avoid spawning objects on them
+        this.gateOccupiedPositions = [];
         this.fadingGates = [];
         this.tileGroup = null;
         this.tileSize = 0;
@@ -64,52 +66,34 @@ export class Game {
         let firstInteractionOccurred = false;
 
         const tryShowButton = () => {
-            // Only proceed if both loading is done and the user has interacted.
             if (loadingComplete && firstInteractionOccurred) {
-                console.log("Loading complete and interaction occurred. Starting 3s timer.");
-                setTimeout(() => {
-                    this.uiManager.showCloseButton();
-                }, 3000);
+                setTimeout(() => this.uiManager.showCloseButton(), 3000);
             }
         };
 
         const overlayContainer = document.getElementById('overlay-container');
-        
-        let blurHandler;
-        let pointerDownHandler;
+        let blurHandler, pointerDownHandler;
 
         const onFirstInteraction = () => {
-            if (firstInteractionOccurred) return; // Should not be necessary, but good for safety
-            console.log("First interaction detected.");
+            if (firstInteractionOccurred) return;
             firstInteractionOccurred = true;
             tryShowButton();
-
-            // Clean up both listeners immediately
             window.removeEventListener('blur', blurHandler);
             overlayContainer.removeEventListener('pointerdown', pointerDownHandler);
         };
 
-        blurHandler = () => {
-            // Use a timeout because document.activeElement might not be updated immediately
-            setTimeout(() => {
-                if (document.activeElement === document.getElementById('overlay-iframe')) {
-                    onFirstInteraction();
-                }
-            }, 0);
-        };
+        blurHandler = () => setTimeout(() => {
+            if (document.activeElement === document.getElementById('overlay-iframe')) onFirstInteraction();
+        }, 0);
 
-        pointerDownHandler = () => {
-            onFirstInteraction();
-        };
+        pointerDownHandler = () => onFirstInteraction();
 
         window.addEventListener('blur', blurHandler);
         overlayContainer.addEventListener('pointerdown', pointerDownHandler);
 
-        // Start loading assets and update the flag when done.
         this._loadAssets().then(() => {
-            console.log("Background asset loading complete.");
             loadingComplete = true;
-            tryShowButton(); // Check if we can show the button now.
+            tryShowButton();
         }).catch(error => {
             console.error("Fatal error during asset loading:", error);
             const errorContainer = document.getElementById('error-container');
@@ -122,11 +106,9 @@ export class Game {
     }
 
     async _loadAssets() {
-        console.log("Loading essential assets...");
         Object.assign(this, initScene());
         
-        const hemisphereLight = new T.HemisphereLight(0xE0BBE4, 0xCE9FCD, 0.96);
-        this.scene.add(hemisphereLight);
+        this.scene.add(new T.HemisphereLight(0xE0BBE4, 0xCE9FCD, 0.96));
         const directionalLight = new T.DirectionalLight(0xFFCCA8, 0.72);
         directionalLight.position.set(-100, 20, -100);
         this.scene.add(directionalLight);
@@ -138,21 +120,19 @@ export class Game {
         this.tileGroup = groundData.tileGroup;
         this.tileSize = groundData.tileSize;
         
-        this.gates = await createGates(this.worldContainer, this.gateOccupiedPositions);
+        this.gates = await createGates(this.worldContainer, this.gateOccupiedPositions, CHUNK_SIZE);
         
         this.player = new Player(this.scene);
         await this.player.loadModels();
+        
         this.atmosphericParticles = new AtmosphericParticles(this.worldContainer);
-
         this.cameraController = new CameraController(this.camera, this.player);
         this.guideParticles = new GuideParticles(this.scene);
         this.navigation = new Navigation(this.gates, (gate) => this.onGatePassed(gate));
         
-        console.log("Essential assets loaded. Starting initial chunk generation...");
         await this.updateChunks(new T.Vector3(0, 0, 0), true);
 
         window.addEventListener('resize', () => this.onWindowResize());
-        console.log("Initial load complete.");
     }
     
     async updateChunks(playerPos, force = false) {
@@ -160,32 +140,65 @@ export class Game {
 
         chunksToUnload.forEach(id => this.unloadChunk(id));
         
-        const loadPromises = chunksToLoad.map(id => this.loadChunk(id));
+        const allChunksToProcess = [...chunksToLoad];
         if (force) {
             this.chunkManager.activeChunkIds.forEach(id => {
-                if (!chunksToLoad.includes(id)) {
-                    loadPromises.push(this.loadChunk(id));
+                if (!allChunksToProcess.includes(id)) {
+                    allChunksToProcess.push(id);
                 }
             });
         }
         
-        if (loadPromises.length > 0) {
-            await Promise.all(loadPromises);
+        if (allChunksToProcess.length > 0) {
+            // console.log(`Sequentially loading ${allChunksToProcess.length} chunks.`);
+            for (const id of allChunksToProcess) {
+                await this.loadChunk(id);
+            }
         }
     }
 
     async loadChunk(chunkId) {
-        if (this.chunkManager.getChunkMeshGroup(chunkId)) return; // Already loaded
+        if (this.chunkManager.getChunkMeshGroup(chunkId)) return;
 
         const [chunkX, chunkZ] = chunkId.split('_').map(Number);
         
-        // Generate object data on the fly using the new recursive functions
-        const rockData = await getOrGenerateRockDataForChunk(chunkX, chunkZ, CHUNK_SIZE, this.gateOccupiedPositions);
-        const cactusData = await getOrGenerateCactiDataForChunk(chunkX, chunkZ, CHUNK_SIZE, this.gateOccupiedPositions);
+        // --- This is the core logic for preventing duplicates ---
+        // 1. Start with global gate positions.
+        const allOccupiedPositions = this.gateOccupiedPositions.map(p => ({
+            position: p, type: 'gate', size: 'gate'
+        }));
+
+        // 2. Collect data from all 8 neighbors + current chunk (if already cached)
+        for (let x = chunkX - 1; x <= chunkX + 1; x++) {
+            for (let z = chunkZ - 1; z <= chunkZ + 1; z++) {
+                const neighborId = `${x}_${z}`;
+                const rockCache = this.rockDataCache.get(neighborId);
+                if (rockCache) {
+                    rockCache.forEach(d => allOccupiedPositions.push({ ...d, type: 'rock' }));
+                }
+                const cactusCache = this.cactiDataCache.get(neighborId);
+                if (cactusCache) {
+                    cactusCache.forEach(d => allOccupiedPositions.push({ ...d, type: 'cactus' }));
+                }
+            }
+        }
+        
+        // 3. Generate new data if not in cache
+        let rockData = this.rockDataCache.get(chunkId);
+        if (!rockData) {
+            rockData = await generateRockDataForChunk(chunkX, chunkZ, CHUNK_SIZE, allOccupiedPositions);
+            this.rockDataCache.set(chunkId, rockData);
+        }
+        
+        let cactusData = this.cactiDataCache.get(chunkId);
+        if (!cactusData) {
+            cactusData = await generateCactiDataForChunk(chunkX, chunkZ, CHUNK_SIZE, allOccupiedPositions);
+            this.cactiDataCache.set(chunkId, cactusData);
+        }
+        
         const chunkData = [...rockData, ...cactusData];
 
         if (chunkData.length === 0) {
-            // Still create a group to mark the chunk as "loaded"
             const emptyGroup = new T.Group();
             emptyGroup.name = `chunk_${chunkId}`;
             this.worldContainer.add(emptyGroup);
@@ -197,8 +210,6 @@ export class Game {
         group.name = `chunk_${chunkId}`;
         
         for (const data of chunkData) {
-            // Because we are reusing model objects from a cache in the generation functions,
-            // we must clone them here before adding to the scene.
             const mesh = data.model.clone();
             mesh.position.copy(data.position);
             mesh.rotation.copy(data.rotation);
@@ -206,33 +217,33 @@ export class Game {
             group.add(mesh);
 
             let obstacle;
-            if (data.multipart) { // For big rocks
-                 const aabb = new T.Box3().setFromObject(mesh);
+            if (data.multipart) { // Big rocks
+                const aabb = new T.Box3().setFromObject(mesh);
                 const size = new T.Vector3(); aabb.getSize(size);
                 const center = new T.Vector3(); aabb.getCenter(center);
                 const numBoxes = 3;
                 const subBoxes = [];
-                 if (size.x > size.z) {
-                    const boxWidth = size.x / numBoxes;
-                    for (let j = 0; j < numBoxes; j++) {
-                        const boxCenter = new T.Vector3(center.x - size.x / 2 + boxWidth * (j + 0.5), center.y, center.z);
-                        const newSize = new T.Vector3(boxWidth, size.y, size.z * 0.8);
-                        const subBox = new T.Box3().setFromCenterAndSize(boxCenter, newSize);
-                        subBox.min.y += size.y * 0.15;
-                        subBoxes.push(subBox);
+                const mainAxisSize = (size.x > size.z) ? size.x : size.z;
+                const subBoxSize = mainAxisSize / numBoxes;
+                
+                for (let j = 0; j < numBoxes; j++) {
+                    const boxCenter = new T.Vector3(center.x, center.y, center.z);
+                    const newSize = new T.Vector3(size.x, size.y, size.z);
+                    if (size.x > size.z) {
+                       boxCenter.x = center.x - size.x / 2 + subBoxSize * (j + 0.5);
+                       newSize.x = subBoxSize;
+                       newSize.z *= 0.8;
+                    } else {
+                       boxCenter.z = center.z - size.z / 2 + subBoxSize * (j + 0.5);
+                       newSize.z = subBoxSize;
+                       newSize.x *= 0.8;
                     }
-                } else {
-                    const boxDepth = size.z / numBoxes;
-                    for (let j = 0; j < numBoxes; j++) {
-                        const boxCenter = new T.Vector3(center.x, center.y, center.z - size.z / 2 + boxDepth * (j + 0.5));
-                        const newSize = new T.Vector3(size.x * 0.8, size.y, boxDepth);
-                        const subBox = new T.Box3().setFromCenterAndSize(boxCenter, newSize);
-                        subBox.min.y += size.y * 0.15;
-                        subBoxes.push(subBox);
-                    }
+                    const subBox = new T.Box3().setFromCenterAndSize(boxCenter, newSize);
+                    subBox.min.y += size.y * 0.15;
+                    subBoxes.push(subBox);
                 }
                 obstacle = { type: data.type, mesh: mesh, boxes: subBoxes, sourceData: data, chunkId: chunkId };
-            } else { // For small/medium rocks and cacti
+            } else { // Small/medium rocks and cacti
                 const tempBox = new T.Box3().setFromObject(mesh);
                 const size = new T.Vector3(); tempBox.getSize(size);
                 const center = new T.Vector3(); tempBox.getCenter(center);
@@ -331,7 +342,6 @@ export class Game {
         }
     }
 
-    // --- UNCHANGED METHODS ---
     onGatePassed(gate) { if (!this.fadingGates.includes(gate)) { this.fadingGates.push(gate); } const gateNumber = gate.userData.number; if (gateNumber) { const url = `https://spinning-experiences-055746.framer.app/popup/${gateNumber}`; this.uiManager.showGatePopup(url); } }
     pause() { this.isPaused = true; if (this.animationFrameId) { cancelAnimationFrame(this.animationFrameId); this.animationFrameId = null; } if (this.player && this.player.input) { this.player.input.reset(); } if (this.cameraController) { this.cameraController.reset(); } console.log("Game paused"); }
     resume() { if (!this.isGameStarted) return; this.isPaused = false; this.clock.getDelta(); this.animate(); console.log("Game resumed"); }
@@ -348,7 +358,6 @@ export class Game {
         const deltaTime = this.clock.getDelta();
         const playerWorldPosition = new T.Vector3().copy(this.worldContainer.position).negate();
 
-        // Update systems
         this.updateChunks(playerWorldPosition);
         this.updateFlyingObjects(deltaTime);
 
@@ -362,7 +371,6 @@ export class Game {
         this.atmosphericParticles.update(deltaTime, playerWorldPosition);
         this.updateInfiniteGround();
 
-        // Update helpers
         const currentTargetGate = this.navigation.getCurrentTarget();
         if (currentTargetGate) {
             const gateWorldPos = currentTargetGate.getWorldPosition(new T.Vector3());
@@ -371,7 +379,6 @@ export class Game {
             this.guideParticles.update(deltaTime, null, null);
         }
 
-        // Final scene updates and render
         this.sky.position.copy(this.camera.position);
         this.stars.position.copy(this.camera.position);
         this.milkyWay.position.copy(this.camera.position);

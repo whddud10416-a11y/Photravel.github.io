@@ -2,8 +2,7 @@ import * as T from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createSeededRandom } from '../utils/SeededRandom.js';
 
-// Module-level caches
-const cactiDataCache = new Map();
+// Module-level cache for models, but not for chunk data.
 const loader = new GLTFLoader();
 const modelCache = new Map();
 
@@ -34,32 +33,36 @@ const cactusFileNames = {
 };
 
 const cactusConfigs = {
-    small: { scale: 1.5, count: 15, minDistance: 4 },
-    medium: { scale: 2.5, count: 15, minDistance: 6 },
-    large: { scale: 4.0, count: 10, minDistance: 10 },
+    large:  { scale: 4.0, count: 6, selfDistance: 200 },
+    medium: { scale: 2.5, count: 9, selfDistance: 100 },
+    small:  { scale: 1.5, count: 9, selfDistance: 50 },
+};
+
+const DISTANCE_MAP = {
+    cactus: {
+        differentSize: 60,
+        rock: 30,
+        gate: 30,
+    }
 };
 
 /**
- * Recursively gets or generates cactus data for a specific chunk.
+ * Generates cactus data for a specific chunk, checking against existing and neighbor positions.
  * @param {number} chunkX - The x-coordinate of the chunk.
  * @param {number} chunkZ - The z-coordinate of the chunk.
  * @param {number} chunkSize - The size of the chunk.
- * @param {T.Vector3[]} globalOccupiedPositions - Positions of global objects (gates) to avoid.
- * @returns {Promise<object[]>} A promise that resolves to the array of raw object data for the chunk.
+ * @param {object[]} allOccupiedPositions - An array of objects with {position, type, size} to check against.
+ * @returns {Promise<object[]>} A promise that resolves to the array of generated cactus data for the chunk.
  */
-export async function getOrGenerateCactiDataForChunk(chunkX, chunkZ, chunkSize, globalOccupiedPositions) {
-    const chunkId = `${chunkX}_${chunkZ}`;
-    if (cactiDataCache.has(chunkId)) {
-        return cactiDataCache.get(chunkId);
-    }
-
-    // --- Non-Recursive Generation logic ---
+export async function generateCactiDataForChunk(chunkX, chunkZ, chunkSize, allOccupiedPositions) {
     const finalObjectData = [];
-    const internalPositions = []; // Keep track of positions within this chunk
     const seed = (chunkX * 19 + chunkZ * 47) * 23;
     const seededRandom = createSeededRandom(seed);
 
-    for (const category in cactusConfigs) {
+    // Process large cacti first, then medium, then small
+    const categories = ['large', 'medium', 'small'];
+
+    for (const category of categories) {
         const config = cactusConfigs[category];
         const files = cactusFileNames[category];
         
@@ -68,25 +71,30 @@ export async function getOrGenerateCactiDataForChunk(chunkX, chunkZ, chunkSize, 
             let candidatePosition;
             let attempts = 0;
 
-            while (!positionIsValid && attempts < 20) {
+            while (!positionIsValid && attempts < 50) {
                 const posX = (chunkX + seededRandom() - 0.5) * chunkSize;
                 const posZ = (chunkZ + seededRandom() - 0.5) * chunkSize;
                 candidatePosition = new T.Vector3(posX, 0, posZ);
                 
                 positionIsValid = true;
 
-                // Check against global objects (e.g., gates)
-                for (const pos of globalOccupiedPositions) {
-                    if (candidatePosition.distanceTo(pos) < config.minDistance) {
-                        positionIsValid = false;
-                        break;
-                    }
-                }
-                if (!positionIsValid) { attempts++; continue; }
+                for (const occupied of allOccupiedPositions) {
+                    const dist = candidatePosition.distanceTo(occupied.position);
+                    let minAllowedDist = 0;
 
-                // Check against objects already placed in THIS chunk
-                for (const pos of internalPositions) {
-                    if (candidatePosition.distanceTo(pos) < config.minDistance) {
+                    if (occupied.type === 'cactus') {
+                        if (occupied.size === category) {
+                            minAllowedDist = config.selfDistance;
+                        } else {
+                            minAllowedDist = DISTANCE_MAP.cactus.differentSize;
+                        }
+                    } else if (occupied.type === 'rock') {
+                        minAllowedDist = DISTANCE_MAP.cactus.rock;
+                    } else if (occupied.type === 'gate') {
+                        minAllowedDist = DISTANCE_MAP.cactus.gate;
+                    }
+
+                    if (dist < minAllowedDist) {
                         positionIsValid = false;
                         break;
                     }
@@ -95,15 +103,22 @@ export async function getOrGenerateCactiDataForChunk(chunkX, chunkZ, chunkSize, 
             }
 
             if (positionIsValid) {
-                internalPositions.push(candidatePosition.clone());
+                const newCactusInfo = {
+                    position: candidatePosition.clone(),
+                    type: 'cactus',
+                    size: category
+                };
+                allOccupiedPositions.push(newCactusInfo);
+
                 const modelFile = `cactus/${files[Math.floor(seededRandom() * files.length)]}`;
                 const model = await getModel(modelFile);
 
                 if (model) {
                     finalObjectData.push({
                         type: 'cactus',
+                        size: category,
                         model: model,
-                        position: candidatePosition,
+                        position: candidatePosition.clone(),
                         rotation: new T.Euler(-Math.PI / 2, 0, seededRandom() * Math.PI * 2),
                         scale: new T.Vector3(config.scale, config.scale, config.scale)
                     });
@@ -112,6 +127,5 @@ export async function getOrGenerateCactiDataForChunk(chunkX, chunkZ, chunkSize, 
         }
     }
     
-    cactiDataCache.set(chunkId, finalObjectData);
     return finalObjectData;
 }

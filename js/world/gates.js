@@ -26,29 +26,28 @@ function makeTextSprite(message, opts) {
     return sprite;
 }
 
-export async function createGates(container, occupiedPositions) {
+export async function createGates(container, occupiedPositions, chunkSize) {
     const loader = new GLTFLoader();
     const gates = [];
     const gateConfig = {
         scale: 0.1,
-        count: 86, // 86 random + 1 fixed = 87 total
-        minDistFromPrev: 900,
-        maxDistFromPrev: 1200,
-        minDistFromAny: 60, // Increased to avoid collision with rocks/cacti
+        count: 86,
+        minDist: 400, // Reduced distance
+        maxDist: 700, // Reduced distance
     };
     const gltf = await loader.loadAsync('gate/gate.glb');
     const sourceGateModel = gltf.scene;
 
-    // Brighten the gate material by 10%
+    // Keep track of how many gates are in each chunk
+    const chunkGateCount = new Map();
+
     sourceGateModel.traverse(child => {
         if (child.isMesh && child.material && child.material.color) {
             child.material.color.multiplyScalar(1.05);
         }
     });
-
-    // --- Create all gates first without numbering ---
     
-    // 1. Create a special gate near the origin first.
+    // --- Gate 1 (near origin) ---
     const firstGateAngle = Math.random() * Math.PI * 2;
     const firstGateRadius = T.MathUtils.randFloat(50, 100);
     const firstGatePosition = new T.Vector3(
@@ -57,7 +56,10 @@ export async function createGates(container, occupiedPositions) {
         Math.sin(firstGateAngle) * firstGateRadius
     );
     
+    // Add to occupied list and update chunk count
     occupiedPositions.push(firstGatePosition.clone());
+    const firstChunkId = `${Math.floor(firstGatePosition.x / chunkSize)}_${Math.floor(firstGatePosition.z / chunkSize)}`;
+    chunkGateCount.set(firstChunkId, 1);
 
     const firstGate = sourceGateModel.clone();
     const firstGateBox = new T.Box3().setFromObject(firstGate);
@@ -69,19 +71,18 @@ export async function createGates(container, occupiedPositions) {
     container.add(firstGate);
     gates.push(firstGate);
 
-
-    // The generation chain will now start from this first gate.
     let lastGatePosition = firstGatePosition.clone();
 
-    // 2. Create all the remaining random gates
-    for (let i = 0; i < gateConfig.count - 1; i++) { // N-1 gates
+    // --- Create all the remaining random gates ---
+    for (let i = 0; i < gateConfig.count - 1; i++) {
         let positionIsValid = false;
         let candidatePosition;
         let attempts = 0;
         
-        while (!positionIsValid && attempts < 5000) {
+        while (!positionIsValid && attempts < 10000) {
+            attempts++;
             const randomAngle = Math.random() * Math.PI * 2;
-            const randomRadius = T.MathUtils.randFloat(gateConfig.minDistFromPrev, gateConfig.maxDistFromPrev);
+            const randomRadius = T.MathUtils.randFloat(gateConfig.minDist, gateConfig.maxDist);
             
             candidatePosition = new T.Vector3(
                 lastGatePosition.x + Math.cos(randomAngle) * randomRadius,
@@ -89,18 +90,33 @@ export async function createGates(container, occupiedPositions) {
                 lastGatePosition.z + Math.sin(randomAngle) * randomRadius
             );
 
+            // 1. Check chunk limit first (it's a cheaper check)
+            const chunkId = `${Math.floor(candidatePosition.x / chunkSize)}_${Math.floor(candidatePosition.z / chunkSize)}`;
+            const currentCountInChunk = chunkGateCount.get(chunkId) || 0;
+            if (currentCountInChunk >= 2) {
+                positionIsValid = false;
+                continue; // Try a new position
+            }
+
+            // 2. If chunk is ok, check distance to other gates
             positionIsValid = true;
             for (const pos of occupiedPositions) {
-                if (candidatePosition.distanceTo(pos) < gateConfig.minDistFromAny) {
+                if (candidatePosition.distanceTo(pos) < gateConfig.minDist) {
                     positionIsValid = false;
                     break;
                 }
             }
-            attempts++;
         }
 
         if (positionIsValid) {
+            // Add to occupied list
             occupiedPositions.push(candidatePosition.clone());
+            
+            // Update chunk count
+            const chunkId = `${Math.floor(candidatePosition.x / chunkSize)}_${Math.floor(candidatePosition.z / chunkSize)}`;
+            const currentCount = chunkGateCount.get(chunkId) || 0;
+            chunkGateCount.set(chunkId, currentCount + 1);
+
             lastGatePosition = candidatePosition.clone(); 
 
             const gate = sourceGateModel.clone();
@@ -116,7 +132,6 @@ export async function createGates(container, occupiedPositions) {
             
             gate.traverse(child => {
                 if (child.isMesh && child.material && child.material.transparent) {
-                    console.log("Applying alpha fix to gate material:", child.material.name);
                     child.material.transparent = false;
                     child.material.alphaTest = 0.5;
                     child.material.depthWrite = true;
@@ -128,10 +143,7 @@ export async function createGates(container, occupiedPositions) {
     }
 
     // --- Shuffle and assign numbers to the gates randomly ---
-    // The gate positions are already set in a chain; this just randomizes the numbers.
     const numbersToAssign = Array.from({length: gates.length}, (_, i) => i + 1);
-
-    // Fisher-Yates (aka Knuth) Shuffle algorithm
     for (let i = numbersToAssign.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [numbersToAssign[i], numbersToAssign[j]] = [numbersToAssign[j], numbersToAssign[i]];

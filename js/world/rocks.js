@@ -2,8 +2,7 @@ import * as T from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createSeededRandom } from '../utils/SeededRandom.js';
 
-// Module-level cache for generated chunk data to ensure persistence.
-const rockDataCache = new Map();
+// Module-level cache for models, but not for chunk data.
 const loader = new GLTFLoader();
 const modelCache = new Map();
 
@@ -23,28 +22,28 @@ const rockFileNames = {
 };
 
 const rockConfigs = {
-    big: { scale: 3.0, count: 3, chance: 0.585, minDistance: 12, multipart: true },
-    middle: { scale: 1.5, count: 10, chance: 1.0, minDistance: 4, multipart: false },
-    small: { scale: 1.5, count: 20, chance: 1.0, minDistance: 1.5, multipart: false },
+    big:    { scale: 3.0, count: 2, chance: 0.585, multipart: true,  selfDistance: 200 },
+    middle: { scale: 1.5, count: 6, chance: 1.0,   multipart: false, selfDistance: 100 },
+    small:  { scale: 1.5, count: 11, chance: 1.0,  multipart: false, selfDistance: 50 },
+};
+const DISTANCE_MAP = {
+    rock: {
+        differentSize: 60,
+        cactus: 30,
+        gate: 30,
+    }
 };
 
 /**
- * Recursively gets or generates rock data for a specific chunk, ensuring no overlaps at borders.
+ * Generates rock data for a specific chunk, checking against existing and neighbor positions.
  * @param {number} chunkX - The x-coordinate of the chunk.
  * @param {number} chunkZ - The z-coordinate of the chunk.
  * @param {number} chunkSize - The size of the chunk.
- * @param {T.Vector3[]} globalOccupiedPositions - Positions of global objects (gates) to avoid.
- * @returns {Promise<object[]>} A promise that resolves to the array of raw object data for the chunk.
+ * @param {object[]} allOccupiedPositions - An array of objects with {position, type, size} to check against.
+ * @returns {Promise<object[]>} A promise that resolves to the array of generated rock data for the chunk.
  */
-export async function getOrGenerateRockDataForChunk(chunkX, chunkZ, chunkSize, globalOccupiedPositions) {
-    const chunkId = `${chunkX}_${chunkZ}`;
-    if (rockDataCache.has(chunkId)) {
-        return rockDataCache.get(chunkId);
-    }
-
-    // --- Non-Recursive Generation logic ---
+export async function generateRockDataForChunk(chunkX, chunkZ, chunkSize, allOccupiedPositions) {
     const finalObjectData = [];
-    const internalPositions = []; // Keep track of positions within this chunk
     const seed = (chunkX * 31 + chunkZ * 17) * 13;
     const seededRandom = createSeededRandom(seed);
 
@@ -54,9 +53,7 @@ export async function getOrGenerateRockDataForChunk(chunkX, chunkZ, chunkSize, g
         
         let numToPlace = 0;
         for (let n = 0; n < config.count; n++) {
-            if (seededRandom() < config.chance) {
-                numToPlace++;
-            }
+            if (seededRandom() < config.chance) numToPlace++;
         }
 
         for (let k = 0; k < numToPlace; k++) {
@@ -64,25 +61,30 @@ export async function getOrGenerateRockDataForChunk(chunkX, chunkZ, chunkSize, g
             let candidatePosition;
             let attempts = 0;
 
-            while (!positionIsValid && attempts < 20) {
+            while (!positionIsValid && attempts < 50) {
                 const posX = (chunkX + seededRandom() - 0.5) * chunkSize;
                 const posZ = (chunkZ + seededRandom() - 0.5) * chunkSize;
                 candidatePosition = new T.Vector3(posX, 0, posZ);
                 
                 positionIsValid = true;
                 
-                // Check against global objects (e.g., gates)
-                for (const pos of globalOccupiedPositions) {
-                    if (candidatePosition.distanceTo(pos) < config.minDistance) {
-                        positionIsValid = false;
-                        break;
-                    }
-                }
-                if (!positionIsValid) { attempts++; continue; }
+                for (const occupied of allOccupiedPositions) {
+                    const dist = candidatePosition.distanceTo(occupied.position);
+                    let minAllowedDist = 0;
 
-                // Check against objects already placed in THIS chunk
-                for (const pos of internalPositions) {
-                    if (candidatePosition.distanceTo(pos) < config.minDistance) {
+                    if (occupied.type === 'rock') {
+                        if (occupied.size === category) {
+                            minAllowedDist = config.selfDistance;
+                        } else {
+                            minAllowedDist = DISTANCE_MAP.rock.differentSize;
+                        }
+                    } else if (occupied.type === 'cactus') {
+                        minAllowedDist = DISTANCE_MAP.rock.cactus;
+                    } else if (occupied.type === 'gate') {
+                        minAllowedDist = DISTANCE_MAP.rock.gate;
+                    }
+
+                    if (dist < minAllowedDist) {
                         positionIsValid = false;
                         break;
                     }
@@ -91,16 +93,21 @@ export async function getOrGenerateRockDataForChunk(chunkX, chunkZ, chunkSize, g
             }
 
             if (positionIsValid) {
-                // Add to this chunk's internal position list
-                internalPositions.push(candidatePosition.clone());
+                const newRockInfo = {
+                    position: candidatePosition.clone(),
+                    type: 'rock',
+                    size: category
+                };
+                allOccupiedPositions.push(newRockInfo);
 
                 const modelFile = `rocks/${files[Math.floor(seededRandom() * files.length)]}`;
                 const model = await getModel(modelFile);
 
                 finalObjectData.push({
                     type: 'rock',
+                    size: category,
                     model: model,
-                    position: candidatePosition,
+                    position: candidatePosition.clone(),
                     rotation: new T.Euler(0, seededRandom() * Math.PI * 2, 0),
                     scale: new T.Vector3(config.scale, config.scale, config.scale),
                     multipart: config.multipart
@@ -109,7 +116,5 @@ export async function getOrGenerateRockDataForChunk(chunkX, chunkZ, chunkSize, g
         }
     }
     
-    // Cache the result and return it.
-    rockDataCache.set(chunkId, finalObjectData);
     return finalObjectData;
 }
