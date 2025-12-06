@@ -179,9 +179,16 @@ export class Game {
 
         const [chunkX, chunkZ] = chunkId.split('_').map(Number);
         
-        // Generate object data on the fly using the new recursive functions
+        // 1. Generate rock data first
         const rockData = await getOrGenerateRockDataForChunk(chunkX, chunkZ, CHUNK_SIZE, this.gateOccupiedPositions);
-        const cactusData = await getOrGenerateCactiDataForChunk(chunkX, chunkZ, CHUNK_SIZE, this.gateOccupiedPositions);
+
+        // 2. Combine gate and rock positions
+        const occupiedByGatesAndRocks = [...this.gateOccupiedPositions];
+        rockData.forEach(data => occupiedByGatesAndRocks.push(data.position));
+
+        // 3. Generate cacti, avoiding gates AND rocks
+        const cactusData = await getOrGenerateCactiDataForChunk(chunkX, chunkZ, CHUNK_SIZE, occupiedByGatesAndRocks);
+        
         const chunkData = [...rockData, ...cactusData];
 
         if (chunkData.length === 0) {

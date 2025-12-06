@@ -1,6 +1,33 @@
 import * as T from 'three';
 import { config } from '../config.js';
 
+// Module-level variables for ground shape, needed for getGroundHeight
+let seamlessDuneFrequencyX, seamlessDuneFrequencyY;
+const duneHeight = config.world.duneHeight;
+
+/**
+ * Calculates the ground's world Y position at a given X and Z coordinate.
+ * @param {number} worldX The world x-coordinate.
+ * @param {number} worldZ The world z-coordinate.
+ * @returns {number} The height (y-coordinate) of the ground at that point.
+ */
+export function getGroundHeight(worldX, worldZ) {
+    if (seamlessDuneFrequencyX === undefined) {
+        // This is a fallback in case getGroundHeight is called before createGround initializes the values.
+        // It's better to ensure createGround is called first.
+        const tileSize = config.world.groundSize;
+        const periodFactorX = Math.ceil(tileSize / (config.world.duneFrequency * 2 * Math.PI));
+        seamlessDuneFrequencyX = tileSize / (periodFactorX * 2 * Math.PI);
+        const periodFactorY = Math.ceil(tileSize / (20 * 2 * Math.PI));
+        seamlessDuneFrequencyY = tileSize / (periodFactorY * 2 * Math.PI);
+    }
+    // The formula is derived from the vertex displacement logic in createGround,
+    // accounting for the mesh's -90 degree rotation around the X-axis.
+    const y = (Math.sin(worldX / seamlessDuneFrequencyX) * duneHeight) + (Math.sin(-worldZ / seamlessDuneFrequencyY) * duneHeight);
+    return y;
+}
+
+
 export function createGround(container) {
     const tileSize = config.world.groundSize;
     const segments = 100;
@@ -15,16 +42,16 @@ export function createGround(container) {
 
     // Calculate new frequencies to ensure seamless tiling
     const periodFactorX = Math.ceil(tileSize / (config.world.duneFrequency * 2 * Math.PI));
-    const seamlessDuneFrequencyX = tileSize / (periodFactorX * 2 * Math.PI);
+    seamlessDuneFrequencyX = tileSize / (periodFactorX * 2 * Math.PI);
 
     const periodFactorY = Math.ceil(tileSize / (20 * 2 * Math.PI)); // Original hardcoded 20
-    const seamlessDuneFrequencyY = tileSize / (periodFactorY * 2 * Math.PI);
+    seamlessDuneFrequencyY = tileSize / (periodFactorY * 2 * Math.PI);
 
     for (let i = 0; i < positions.count; i++) {
         const x = positions.getX(i);
         const y = positions.getY(i);
         // Use the new seamless frequencies
-        const z = (Math.sin(x / seamlessDuneFrequencyX) * config.world.duneHeight) + (Math.sin(y / seamlessDuneFrequencyY) * config.world.duneHeight);
+        const z = getGroundHeight(x, -y); // Use the exported function for consistency. y is inverted because of the plane's orientation vs world Z.
         positions.setZ(i, z);
     }
     groundGeometry.computeVertexNormals();

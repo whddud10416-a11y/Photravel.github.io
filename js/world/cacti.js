@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createSeededRandom } from '../utils/SeededRandom.js';
+import { getGroundHeight } from './ground.js';
 
 // Module-level caches
 const cactiDataCache = new Map();
@@ -34,9 +35,9 @@ const cactusFileNames = {
 };
 
 const cactusConfigs = {
-    small: { scale: 1.5, count: 15, minDistance: 4 },
-    medium: { scale: 2.5, count: 15, minDistance: 6 },
-    large: { scale: 4.0, count: 10, minDistance: 10 },
+    small: { scale: 1.5, count: 7, minDistance: 4 },
+    medium: { scale: 2.5, count: 7, minDistance: 6 },
+    large: { scale: 4.0, count: 5, minDistance: 10 },
 };
 
 /**
@@ -67,11 +68,13 @@ export async function getOrGenerateCactiDataForChunk(chunkX, chunkZ, chunkSize, 
             let positionIsValid = false;
             let candidatePosition;
             let attempts = 0;
+            let groundY; // Declare groundY here to make it accessible in the outer scope
 
             while (!positionIsValid && attempts < 20) {
                 const posX = (chunkX + seededRandom() - 0.5) * chunkSize;
                 const posZ = (chunkZ + seededRandom() - 0.5) * chunkSize;
-                candidatePosition = new T.Vector3(posX, 0, posZ);
+                groundY = getGroundHeight(posX, posZ); // Assign value here
+                candidatePosition = new T.Vector3(posX, groundY, posZ);
                 
                 positionIsValid = true;
 
@@ -100,6 +103,13 @@ export async function getOrGenerateCactiDataForChunk(chunkX, chunkZ, chunkSize, 
                 const model = await getModel(modelFile);
 
                 if (model) {
+                    // Calculate bounding box to find the exact vertical offset needed for this specific model
+                    const box = new T.Box3().setFromObject(model);
+                    const verticalOffset = -box.min.y; // Distance from model's origin to its bottom
+
+                    // Apply ground height plus the SCALED vertical offset
+                    candidatePosition.y += (verticalOffset * config.scale);
+
                     finalObjectData.push({
                         type: 'cactus',
                         model: model,

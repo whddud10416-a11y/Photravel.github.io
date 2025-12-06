@@ -34,7 +34,7 @@ export async function createGates(container, occupiedPositions) {
         count: 86, // 86 random + 1 fixed = 87 total
         minDistFromPrev: 900,
         maxDistFromPrev: 1200,
-        minDistFromAny: 60, // Increased to avoid collision with rocks/cacti
+        minDistFromAny: 450, // Increased to avoid collision with other gates in the chain
     };
     const gltf = await loader.loadAsync('gate/gate.glb');
     const sourceGateModel = gltf.scene;

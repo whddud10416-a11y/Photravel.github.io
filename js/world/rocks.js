@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createSeededRandom } from '../utils/SeededRandom.js';
+import { getGroundHeight } from './ground.js';
 
 // Module-level cache for generated chunk data to ensure persistence.
 const rockDataCache = new Map();
@@ -23,9 +24,9 @@ const rockFileNames = {
 };
 
 const rockConfigs = {
-    big: { scale: 3.0, count: 3, chance: 0.585, minDistance: 12, multipart: true },
-    middle: { scale: 1.5, count: 10, chance: 1.0, minDistance: 4, multipart: false },
-    small: { scale: 1.5, count: 20, chance: 1.0, minDistance: 1.5, multipart: false },
+    big: { scale: 3.0, count: 1, chance: 0.585, minDistance: 12, multipart: true },
+    middle: { scale: 1.5, count: 5, chance: 1.0, minDistance: 4, multipart: false },
+    small: { scale: 1.5, count: 10, chance: 1.0, minDistance: 1.5, multipart: false },
 };
 
 /**
@@ -63,11 +64,13 @@ export async function getOrGenerateRockDataForChunk(chunkX, chunkZ, chunkSize, g
             let positionIsValid = false;
             let candidatePosition;
             let attempts = 0;
+            let groundY; // Declare groundY here to make it accessible in the outer scope
 
             while (!positionIsValid && attempts < 20) {
                 const posX = (chunkX + seededRandom() - 0.5) * chunkSize;
                 const posZ = (chunkZ + seededRandom() - 0.5) * chunkSize;
-                candidatePosition = new T.Vector3(posX, 0, posZ);
+                groundY = getGroundHeight(posX, posZ); // Assign value here
+                candidatePosition = new T.Vector3(posX, groundY, posZ);
                 
                 positionIsValid = true;
                 
@@ -97,6 +100,13 @@ export async function getOrGenerateRockDataForChunk(chunkX, chunkZ, chunkSize, g
                 const modelFile = `rocks/${files[Math.floor(seededRandom() * files.length)]}`;
                 const model = await getModel(modelFile);
 
+                // Calculate bounding box to find the exact vertical offset needed for this specific model
+                const box = new T.Box3().setFromObject(model);
+                const verticalOffset = -box.min.y; // Distance from model's origin to its bottom
+
+                // Apply ground height plus the SCALED vertical offset
+                candidatePosition.y += (verticalOffset * config.scale);
+                
                 finalObjectData.push({
                     type: 'rock',
                     model: model,
