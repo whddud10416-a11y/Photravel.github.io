@@ -121,12 +121,15 @@ export class WorldManager {
             
             let verticalOffset = -modelBox.min.y;
             if (data.type === 'rock' && data.size === 'big' && verticalOffset > 1.0) {
-                verticalOffset = 0.7; // Clamp faulty big rock models
+                verticalOffset = 0.2; // Clamp faulty big rock models
             } else if (data.type === 'rock' && data.size === 'small' && verticalOffset > 0.5) {
                 verticalOffset = 0.05; // Clamp faulty small rock models
             }
             
             position.y = maxCornerHeight + (verticalOffset * scale.y);
+            if (data.type === 'rock' && data.size === 'big') {
+                position.y -= 3; // Lower big rocks by 3 units
+            }
             
             
             const mesh = model.clone();
